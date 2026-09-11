@@ -1,0 +1,2 @@
+{ "type": "process", "name": "fdm_process_bbl_0.20", "inherits": "fdm_process_common",
+  "instantiation": "false", "wall_loops": "3" }

@@ -1,0 +1,2 @@
+{ "type": "filament", "name": "fdm_filament_common", "instantiation": "false",
+  "nozzle_temperature": ["220"], "fan_max_speed": ["100"], "filament_retraction_length": ["0.8"] }

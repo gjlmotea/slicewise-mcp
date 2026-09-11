@@ -1,0 +1,18 @@
+{
+  "name": "Bambulab",
+  "version": "02.07.00.08",
+  "machine_model_list": [{ "name": "Bambu Lab P1S", "sub_path": "machine/Bambu Lab P1S.json" }],
+  "machine_list": [
+    { "name": "fdm_machine_common", "sub_path": "machine/fdm_machine_common.json" },
+    { "name": "Bambu Lab P1S 0.4 nozzle", "sub_path": "machine/Bambu Lab P1S 0.4 nozzle.json" }
+  ],
+  "process_list": [
+    { "name": "fdm_process_common", "sub_path": "process/fdm_process_common.json" },
+    { "name": "fdm_process_bbl_0.20", "sub_path": "process/fdm_process_bbl_0.20.json" },
+    { "name": "0.20mm Standard @BBL P1S", "sub_path": "process/0.20mm Standard @BBL P1S.json" }
+  ],
+  "filament_list": [
+    { "name": "fdm_filament_common", "sub_path": "filament/fdm_filament_common.json" },
+    { "name": "Bambu PLA Basic @BBL P1S", "sub_path": "filament/Bambu PLA Basic @BBL P1S.json" }
+  ]
+}

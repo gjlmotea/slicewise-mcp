@@ -1,0 +1,2 @@
+{ "type": "machine", "name": "fdm_machine_common", "instantiation": "false",
+  "printable_area": ["0x0", "256x0", "256x256", "0x256"], "nozzle_diameter": ["0.4"] }

@@ -1,0 +1,2 @@
+{ "type": "machine", "name": "Bambu Lab P1S 0.4 nozzle", "inherits": "fdm_machine_common",
+  "instantiation": "true", "printer_model": "Bambu Lab P1S" }

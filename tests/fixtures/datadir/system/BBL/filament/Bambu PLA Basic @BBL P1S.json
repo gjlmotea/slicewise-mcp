@@ -1,0 +1,2 @@
+{ "type": "filament", "name": "Bambu PLA Basic @BBL P1S", "inherits": "fdm_filament_common",
+  "instantiation": "true", "filament_type": ["PLA"] }
