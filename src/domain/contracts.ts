@@ -81,9 +81,20 @@ export type SliceStats = {
   /** 秒。來自 `; model printing time`。 */
   readonly modelPrintTimeSeconds?: number;
   readonly totalEstimatedTimeSeconds?: number;
+  /** 整盤合計，含換色沖洗與擦料塔。多色時是各色加總。 */
   readonly filamentGrams?: number;
+  /** 整盤合計，多色時是各色加總。 */
   readonly filamentLengthMm?: number;
   readonly filamentCostCny?: number;
+  /** 多色時每一色的用量；單色不回傳。 */
+  readonly filamentBreakdown?: readonly FilamentUsage[];
+};
+
+export type FilamentUsage = {
+  /** 耗材槽編號（1 起算），取自 G-code 標頭的 `; filament:`。 */
+  readonly filament?: number;
+  readonly grams?: number;
+  readonly lengthMm?: number;
 };
 
 export type SliceOutcome = {

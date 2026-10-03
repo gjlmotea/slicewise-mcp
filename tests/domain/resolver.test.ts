@@ -10,6 +10,7 @@ import {
   toFlattenedPresetFile,
   valuesEqual,
   type RawPreset,
+  type TemplateReader,
 } from '../../src/domain/presets/resolver.js';
 
 /**
@@ -189,5 +190,90 @@ describe('isMetadataKey', () => {
     expect(isMetadataKey('setting_id')).toBe(true);
     expect(isMetadataKey('inherits')).toBe(true);
     expect(isMetadataKey('layer_height')).toBe(false);
+  });
+});
+
+describe('G-code 模板', () => {
+  /**
+   * 照 BambuStudio 02.07 的真實形狀：機型 G-code 不在葉節點本體，而是另外登記的
+   * `<preset> template <key>` 條目；P2S 0.6 沒有自己的模板、繼承 P2S 0.4，
+   * X1C 0.6 則有自己的模板、同時繼承 X1C 0.4。
+   */
+  const MACHINES: Record<string, { origin?: 'user'; body: Record<string, unknown> }> = {
+    fdm_machine_common: {
+      body: { machine_start_gcode: 'G28 ; generic', change_filament_gcode: 'generic change', nozzle_diameter: ['0.4'] },
+    },
+    fdm_bbl_3dp_001_common: {
+      body: { inherits: 'fdm_machine_common', layer_change_gcode: 'common layer change' },
+    },
+    'P2S 0.4': { body: { inherits: 'fdm_bbl_3dp_001_common', printer_model: 'Bambu Lab P2S' } },
+    'P2S 0.6': { body: { inherits: 'P2S 0.4', nozzle_diameter: ['0.6'] } },
+    'X1C 0.4': { body: { inherits: 'fdm_bbl_3dp_001_common' } },
+    'X1C 0.6': { body: { inherits: 'X1C 0.4' } },
+    'My P2S': { origin: 'user', body: { inherits: 'P2S 0.4', machine_start_gcode: 'user start' } },
+  };
+
+  const TEMPLATES: Record<string, Record<string, string>> = {
+    'P2S 0.4': { machine_start_gcode: 'P2S start', layer_change_gcode: 'P2S layer change' },
+    'X1C 0.4': { machine_start_gcode: 'X1C 0.4 start' },
+    'X1C 0.6': { machine_start_gcode: 'X1C 0.6 start' },
+  };
+
+  const readMachine = (name: string): RawPreset | undefined => {
+    const fixture = MACHINES[name];
+    return fixture === undefined
+      ? undefined
+      : { name, kind: 'machine', origin: fixture.origin ?? 'system', body: fixture.body };
+  };
+
+  const readTemplates: TemplateReader = (owner, kind) =>
+    Object.entries(TEMPLATES[owner] ?? {}).map(([key, value]) => ({
+      name: `${owner} template ${key}`,
+      kind,
+      origin: 'system',
+      body: { [key]: value },
+    }));
+
+  it('葉節點沒宣告的機型 G-code 取自它的模板，而不是退回 fdm_machine_common', () => {
+    const resolved = resolvePreset('P2S 0.4', 'machine', readMachine, readTemplates);
+    expect(resolved.settings['machine_start_gcode']).toBe('P2S start');
+    expect(resolved.provenance['machine_start_gcode']).toBe('P2S 0.4 template machine_start_gcode');
+    // 模板蓋過上層 common 宣告的同一個 key。
+    expect(resolved.settings['layer_change_gcode']).toBe('P2S layer change');
+    // 沒有模板的 key 照常沿用繼承鏈。
+    expect(resolved.settings['change_filament_gcode']).toBe('generic change');
+    expect(resolved.provenance['change_filament_gcode']).toBe('fdm_machine_common');
+  });
+
+  it('沒有自己模板的子層沿用父層的模板', () => {
+    const resolved = resolvePreset('P2S 0.6', 'machine', readMachine, readTemplates);
+    expect(resolved.settings['machine_start_gcode']).toBe('P2S start');
+    expect(resolved.settings['nozzle_diameter']).toEqual(['0.6']);
+  });
+
+  it('子層自己的模板蓋過父層的模板', () => {
+    const resolved = resolvePreset('X1C 0.6', 'machine', readMachine, readTemplates);
+    expect(resolved.settings['machine_start_gcode']).toBe('X1C 0.6 start');
+    expect(resolved.provenance['machine_start_gcode']).toBe('X1C 0.6 template machine_start_gcode');
+  });
+
+  it('使用者 preset 自訂的 G-code 蓋過它繼承的原廠模板', () => {
+    const resolved = resolvePreset('My P2S', 'machine', readMachine, readTemplates);
+    expect(resolved.settings['machine_start_gcode']).toBe('user start');
+    expect(resolved.provenance['machine_start_gcode']).toBe('My P2S');
+  });
+
+  it('原廠模板不套在使用者層上，即使名稱相同', () => {
+    const readUserNamedLikeSystem = (name: string): RawPreset | undefined =>
+      name === 'P2S 0.4'
+        ? { name, kind: 'machine', origin: 'user', body: { machine_start_gcode: 'user start' } }
+        : readMachine(name);
+    const resolved = resolvePreset('P2S 0.4', 'machine', readUserNamedLikeSystem, readTemplates);
+    expect(resolved.settings['machine_start_gcode']).toBe('user start');
+  });
+
+  it('沒給模板讀取器時維持只走繼承鏈', () => {
+    const resolved = resolvePreset('P2S 0.4', 'machine', readMachine);
+    expect(resolved.settings['machine_start_gcode']).toBe('G28 ; generic');
   });
 });

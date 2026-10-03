@@ -84,7 +84,10 @@ export const resolvePresetOutputSchema = {
   settings: z.record(z.string(), presetValue),
   provenance: z
     .record(z.string(), z.string())
-    .describe('每個 key 實際來自繼承鏈的哪一層。'),
+    .describe(
+      '每個 key 實際來自繼承鏈的哪一層。機器 G-code 可能來自該層的模板條目，' +
+        '名稱形如「<preset> template machine_start_gcode」。',
+    ),
 };
 
 export const comparePresetsInputSchema = {
@@ -332,8 +335,18 @@ export const sliceOutputSchema = {
       layerHeight: z.number(),
       modelPrintTimeSeconds: z.number().optional(),
       totalEstimatedTimeSeconds: z.number().optional(),
-      filamentGrams: z.number().optional(),
-      filamentLengthMm: z.number().optional(),
+      filamentGrams: z.number().optional().describe('整盤合計（含換色沖洗與擦料塔）；多色時是各色加總。'),
+      filamentLengthMm: z.number().optional().describe('整盤合計；多色時是各色加總。'),
+      filamentBreakdown: z
+        .array(
+          z.object({
+            filament: z.number().optional().describe('耗材槽編號（1 起算）。'),
+            grams: z.number().optional(),
+            lengthMm: z.number().optional(),
+          }),
+        )
+        .optional()
+        .describe('多色時每一色的用量；單色不回傳。'),
     })
     .optional(),
   overrideAudit: z

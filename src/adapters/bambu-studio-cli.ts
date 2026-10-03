@@ -12,9 +12,11 @@ import type {
   SliceRequest,
   SliceResult,
 } from '../domain/contracts.js';
+import { looksLikeZip } from '../domain/model/threemf-reader.js';
+import { filamentColourArgs } from '../domain/slicing/filament-colours.js';
 import { parseGcodeStats } from '../domain/slicing/gcode-stats.js';
 import { routeOverrides, type OverrideRouting } from '../domain/slicing/overrides.js';
-import { readZipDirectory, extractEntry } from '../domain/slicing/zip.js';
+import { readZipDirectory, extractEntry, readZipEntry } from '../domain/slicing/zip.js';
 import { toFlattenedPresetFile, valuesEqual } from '../domain/presets/resolver.js';
 import type { PresetStore } from '../ports/preset-store.js';
 import type { Slicer } from '../ports/slicer.js';
@@ -108,6 +110,19 @@ export class BambuStudioCli implements Slicer {
       const routed = this.#routeOverrides(request);
       warnings.push(...routed.warnings);
 
+      const projectColours = readProjectFilamentColours(request.modelPath);
+      const colourArgs = filamentColourArgs({
+        filamentPresets: request.filamentPresets,
+        projectColours,
+        overrides: request.overrides,
+      });
+      if (colourArgs.length > 0) {
+        warnings.push(
+          `已把專案的 ${projectColours?.length ?? 0} 格耗材顏色交給 CLI：載入的耗材設定同名時，` +
+            'CLI 會把它們當成同一卷料而關掉擦料塔，GUI 則看顏色分辨。',
+        );
+      }
+
       const machinePath = this.#writeFlattened(workDir, 'machine', request.machinePreset, routed.buckets.machine);
       const processPath = this.#writeFlattened(workDir, 'process', request.processPreset, routed.buckets.process);
       const filamentPaths = request.filamentPresets.map((name, index) =>
@@ -131,6 +146,7 @@ export class BambuStudioCli implements Slicer {
         '--load-filaments',
         filamentPaths.join(';'),
         ...placementArgs(request),
+        ...colourArgs,
         ...routed.commandLine,
         '--outputdir',
         this.outputDir,
@@ -170,7 +186,7 @@ export class BambuStudioCli implements Slicer {
           warnings.push(
             `覆寫未生效：${entry.key} 要求 ${JSON.stringify(entry.requested)}，` +
               `產物實際為 ${JSON.stringify(entry.applied)}。` +
-              '這個 key 可能不屬於任何已載入的 preset，或被 CLI 忽略。',
+              unhonouredReason(entry.key),
           );
         }
       }
@@ -280,6 +296,38 @@ function placementArgs(request: SliceRequest): readonly string[] {
   if (placement.rotateX !== undefined) args.push('--rotate-x', String(placement.rotateX));
   if (placement.rotateY !== undefined) args.push('--rotate-y', String(placement.rotateY));
   return args;
+}
+
+/**
+ * 輸入 3MF 的專案耗材顏色（`Metadata/project_settings.config` 的 `filament_colour`）。
+ * 不是 ZIP、不是 Bambu 專案、或讀不到時回傳 undefined —— 寧可不介入也不要猜。
+ */
+export function readProjectFilamentColours(path: string): readonly string[] | undefined {
+  try {
+    const buffer = readFileSync(path);
+    if (!looksLikeZip(buffer)) return undefined;
+    const entry = readZipEntry(buffer, 'Metadata/project_settings.config');
+    if (entry === undefined) return undefined;
+    const parsed: unknown = JSON.parse(entry.toString('utf8'));
+    const colours = typeof parsed === 'object' && parsed !== null
+      ? (parsed as Record<string, unknown>)['filament_colour']
+      : undefined;
+    return Array.isArray(colours) && colours.every((colour) => typeof colour === 'string')
+      ? (colours as string[])
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function unhonouredReason(key: string): string {
+  if (key === 'enable_prime_tower') {
+    return (
+      'CLI 在載入的耗材設定同名、又沒有不同顏色可分辨時，會把它們當成同一卷料而強制關掉擦料塔。' +
+      '多色專案請確認 3MF 內存有各格顏色，或改給不同的耗材 preset。'
+    );
+  }
+  return '這個 key 可能不屬於任何已載入的 preset，或被 CLI 忽略。';
 }
 
 /** 從產物 3MF 讀回實際生效的設定與 G-code 統計。 */

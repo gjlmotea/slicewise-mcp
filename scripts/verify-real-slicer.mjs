@@ -18,12 +18,13 @@ import { defaultExecutablePath } from '../dist/adapters/bambu-studio-cli.js';
  * Bambu Studio，會實際啟動切片器並產生 3MF。因此**不納入 `pnpm verify`**，
  * 由人在有安裝的機器上手動執行。
  *
- * 它證明五件事：
+ * 它證明六件事：
  *   1. preset 繼承鏈展平後，切片結果採用的是原廠 preset 的真值而不是執行檔內建預設值
- *   2. 參數覆寫真的落到產物上（而不是被靜默忽略）
- *   3. 覆寫稽核會誠實回報沒生效的項目
- *   4. negative_part 真的改變幾何（判準：max_z_height）
- *   5. modifier_part 的參數只作用在它涵蓋的區域（判準：同層填充路徑長度的左右分布）
+ *   2. 機型有 G-code 模板時，產物的開機 G-code 是那份模板，不是 fdm_machine_common 的通用開機段
+ *   3. 參數覆寫真的落到產物上（而不是被靜默忽略）
+ *   4. 覆寫稽核會誠實回報沒生效的項目
+ *   5. negative_part 真的改變幾何（判準：max_z_height）
+ *   6. modifier_part 的參數只作用在它涵蓋的區域（判準：同層填充路徑長度的左右分布）
  *
  * 用法：
  *   node scripts/verify-real-slicer.mjs
@@ -106,7 +107,7 @@ try {
     machinePreset: machine,
     processPreset: process_,
     filamentPresets: [filament],
-    reportSettings: INHERITED_KEYS,
+    reportSettings: [...INHERITED_KEYS, 'machine_start_gcode'],
   });
   assert.equal(baseline.ok, true, `基準切片失敗：${baseline.reason ?? ''}`);
   console.log(
@@ -128,6 +129,26 @@ try {
       `${key} 沒有沿用原廠 preset 的值（preset ${JSON.stringify(expected)}，產物 ${JSON.stringify(actual)}）。` +
         '這代表繼承展平失效了。',
     );
+  }
+
+  // BambuStudio 02.07 起機型 G-code 存在「<preset> template <key>」條目裡，葉節點本身沒有。
+  // 沒套到模板時，產物會拿 fdm_machine_common 的通用開機段（G28／G29／M109 S205）。
+  const machineGcode = await call('bambu_resolve_preset', {
+    name: machine,
+    kind: 'machine',
+    keys: ['machine_start_gcode'],
+  });
+  const startSource = machineGcode.provenance.machine_start_gcode;
+  console.log(`\n開機 G-code 來源：${startSource}`);
+  if (startSource?.includes(' template ')) {
+    assert.equal(
+      baseline.appliedSettings.machine_start_gcode,
+      machineGcode.settings.machine_start_gcode,
+      '產物的開機 G-code 必須是原廠模板；不等代表模板沒套到，切出來的是通用開機段。',
+    );
+    console.log('  ✓ 產物的開機 G-code 與原廠模板逐字相同');
+  } else {
+    console.log('  （這台機型沒有 G-code 模板，跳過）');
   }
 
   // ── 3. 覆寫 + 稽核 ────────────────────────────────────────────────────

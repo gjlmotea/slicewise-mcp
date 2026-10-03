@@ -387,7 +387,37 @@ const SPECS: readonly ParameterSpec[] = [
     whatItDoes: '空跑時抬起噴頭，避免刮到已列印表面或撞倒翹起的邊角。',
     raising: '表面刮痕與撞件風險下降，但每次抬降都增加時間，也可能多留下拉絲點。',
     lowering: '快，但噴頭可能刮傷頂面。',
-    related: ['filament_retraction_length', 'reduce_crossing_wall'],
+    related: ['filament_retraction_length', 'reduce_crossing_wall', 'z_hop'],
+  },
+  {
+    key: 'z_hop',
+    owner: 'machine',
+    group: 'retraction',
+    label: 'Z 抬升（機器預設）',
+    valueType: 'length-mm',
+    unit: 'mm',
+    typicalRange: { min: 0, max: 1 },
+    whatItDoes:
+      '機器層的空跑抬升高度，原廠 Bambu 機型幾乎都是 0.4 mm。材料層的 filament_z_hop 不是 nil 時會蓋過它，' +
+      '所以實際生效值要看切片產物，不能只看這一層。',
+    raising: '跨過已印表面時更不容易擦撞，但每次抬降都增加時間，也可能多留拉絲點。',
+    lowering: '快，但噴頭可能刮傷頂面或碰到翹起的邊。',
+    related: ['z_hop_types', 'filament_z_hop', 'retract_lift_above', 'retract_lift_below'],
+  },
+  {
+    key: 'z_hop_types',
+    owner: 'machine',
+    group: 'retraction',
+    label: 'Z 抬升方式（機器預設）',
+    valueType: 'enum',
+    enumValues: ['Auto Lift', 'Normal Lift', 'Slope Lift', 'Spiral Lift'],
+    whatItDoes:
+      '抬升的軌跡。原廠 Bambu 機型都是 Auto Lift，由切片器判斷何時抬；實測一個碗形件的切片，' +
+      '跨越外牆的空跑全部有抬升。材料層的 filament_z_hop_types 不是 nil 時會蓋過它' +
+      '（許多原廠材料設成 Spiral Lift）。',
+    raising: 'Spiral Lift／Slope Lift 在移動中同時抬升，少一次急停，也比較不會在原地拉出細絲。',
+    lowering: 'Normal Lift 先垂直抬再走，路徑最單純，但會在原地多停一下。',
+    related: ['z_hop', 'filament_z_hop_types', 'reduce_crossing_wall'],
   },
 
   // ── 懸空與橋接 ────────────────────────────────────────────────────────
@@ -626,10 +656,29 @@ const SPECS: readonly ParameterSpec[] = [
     group: 'speed',
     label: '避免跨越已印牆面',
     valueType: 'boolean',
-    whatItDoes: '讓空跑路徑繞開已印牆面，減少刮痕與噴頭把小零件撞鬆的機率。',
-    raising: '防撞與表面品質較好，但空跑路徑變長。',
-    lowering: '路徑較短，但更容易跨牆擦撞。',
-    related: ['outer_wall_speed', 'filament_z_hop'],
+    whatItDoes:
+      '空跑距離超過門檻時繞路，避免跨過已印牆面在表面留下料瘤（官方說明的用途）。' +
+      '繞路超過 max_travel_detour_distance 時仍會直接跨牆。',
+    raising:
+      '表面料瘤與刮痕較少，但空跑路徑變長。它不是防撞設定：Bambu 原廠的 Auto Lift 跨越外牆時' +
+      '本來就會抬升，實測一個碗形件開啟後，未抬升的跨外牆空跑反而從 0 次變 10 次。',
+    lowering: '路徑較短；跨牆時靠 Z 抬升避開表面。',
+    related: ['max_travel_detour_distance', 'z_hop_types', 'filament_z_hop'],
+  },
+  {
+    key: 'print_sequence',
+    owner: 'process',
+    group: 'quality',
+    label: '列印順序',
+    valueType: 'enum',
+    enumValues: ['by layer', 'by object'],
+    whatItDoes:
+      '整盤一層一層印（by layer），或一個物件印完再印下一個（by object）。逐件印時，' +
+      '先印好的件不能高過噴頭到橫桿的淨空，物件之間也要拉開距離，切片器會擋。',
+    raising:
+      'by object：物件之間不必每層來回空跑，一件倒了不會拖垮已經印完的件；但受高度淨空限制、排版較鬆。',
+    lowering: 'by layer：沒有高度限制、排版密，但每層都要在所有物件間移動，一件倒了常會拖累整盤。',
+    related: ['extruder_clearance_height_to_rod', 'extruder_clearance_max_radius'],
   },
   {
     key: 'sparse_infill_speed',

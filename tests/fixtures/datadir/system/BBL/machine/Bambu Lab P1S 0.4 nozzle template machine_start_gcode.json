@@ -1,0 +1,3 @@
+{ "name": "Bambu Lab P1S 0.4 nozzle template machine_start_gcode", "instantiation": "false",
+  "machine_start_gcode": ";===== P1S start =====\nM104 S0",
+  "nozzle_diameter": ["9.9"] }

@@ -36,6 +36,29 @@ Bambu Lab 的原廠 preset 是四層繼承結構。葉節點只宣告數十個 k
 
 **本 server 每次切片都先展平三種 preset 再交給 CLI**，切完再從產物 3MF 讀回實際生效的設定做稽核。
 
+### 機型 G-code 不在 preset 裡
+
+BambuStudio 02.07 起，機型專屬的 G-code（`machine_start_gcode`、`change_filament_gcode`、`layer_change_gcode`、`machine_end_gcode`、`time_lapse_gcode`、`wrapping_detection_gcode`）從 preset JSON 拆了出去，改在 `system/BBL.json` 另外登記成 `<preset 名稱> template <key>` 條目（本機 89 條，分屬 29 個機型）。葉節點本身不宣告這些 key，只走 `inherits` 會一路退回 `fdm_machine_common` 的通用開機段（`G28`、`G29`、`M109 S205`、在 X10 畫兩條擠出線）—— 那不是任何一台 Bambu 機器的開機程序。
+
+展平時每一層先套自己的本體，原廠層再套以該層命名的模板。子層的模板蓋過父層的（X1 Carbon 0.6 有自己的模板、同時繼承 0.4），沒有模板的子層沿用父層的（P2S 0.2／0.6／0.8 都用 P2S 0.4 的）；使用者 preset 自訂的 G-code 不會被原廠模板蓋掉。`bambu_resolve_preset` 的來源欄位會寫出模板條目名稱。P2S 0.4 的六段 G-code 與 GUI 專案設定逐字相同。模板不是可選用的 preset，不會出現在 `bambu_list_presets`。
+
+### CLI 會自己關掉擦料塔
+
+切 Bambu 專案 3MF 時，若 `--load-filaments` 載入的耗材設定**名稱全部相同**（最常見：五格都是 Generic PLA，只是顏色不同），CLI 會判定「全部對應到同一卷料」而強制關掉擦料塔，`enable_prime_tower` 覆寫也一起失效。唯一會讓它保留的條件，是命令列另外給了不只一種顏色（`src/BambuStudio.cpp` 的 `disable_wipe_tower_after_mapping`）。GUI 沒有這個問題，因為它看得到每一格的顏色。
+
+所以在這個情形下，本 server 會把專案 3MF 自己存的耗材顏色交給 CLI，並在 `warnings` 註明。其他情形不介入：命令列一帶顏色，CLI 也會依顏色重算換色沖洗量。
+
+一盤四色專案（P2S 0.4 ／ 0.20mm Standard @BBL P2S ／ 5 × Generic PLA，四個物件、換色 34 次）的實測：
+
+| | 只展平繼承鏈 | 本 server | GUI |
+|---|---|---|---|
+| 開機／換色／層切換 G-code | `fdm_machine_common` 通用版 | 與 GUI 逐字相同 | — |
+| 擦料塔 | 關 | 開 | 開 |
+| 耗材合計 | 40.10 g | 43.68 g | 43.68 g |
+| 總時間 | 2h 6m 14s | 2h 18m 8s | 2h 18m 8s |
+
+`bambu_slice` 回報的耗材是各色加總（含換色沖洗與擦料塔，與 GUI「切片結果」的 Total 欄相同），多色時另以 `filamentBreakdown` 逐色列出並對應耗材槽。
+
 ### Bambu Studio 沒有 plugin API
 
 [bambulab/BambuStudio#9614](https://github.com/bambulab/BambuStudio/issues/9614) 正是在要求「Open API or Plugin System for LLM/MCP Integration」，目前 open、無官方回應。
@@ -90,17 +113,17 @@ return ModelVolumeType::MODEL_PART;
 | `bambu_plan_settings` | **事前**：說出目標（穩妥不失敗／省時／強度／外觀／省料），回傳依失敗模式分組的參數規劃 |
 | `bambu_optimize_print_in_place` | **一鍵套用**：從目前或指定 preset 建立齒輪／活動件的保守穩定版；保留既有尺寸校正，不盲目開全域 brim |
 | `bambu_describe_parameters` | 參數在做什麼、單位、建議區間、**調高與調低各自的代價**、牽連參數 |
-| `bambu_diagnose` | **事後**：從現象（翹邊、牽絲、層裂、象腿、頂面有洞……）推有序的處置建議 |
+| `bambu_diagnose` | **事後**：從現象（翹邊、牽絲、層裂、象腿、頂面有洞、印到一半被撞倒……）推有序的處置建議 |
 | `bambu_resolve_preset` | 展平繼承鏈，並標明每個值來自哪一層 |
 | `bambu_compare_presets` | 兩個 preset 展平後的差異 |
-| `bambu_list_presets` | 列出可選用的 preset（過濾掉純繼承的中間層） |
+| `bambu_list_presets` | 列出可選用的 preset（過濾掉純繼承的中間層與 G-code 模板條目） |
 | `bambu_save_user_preset` | 寫入使用者 preset，重啟後出現在 Studio 下拉選單 |
 
 ### 切片
 
 | 工具 | 用途 |
 |---|---|
-| `bambu_slice` | 展平後切片，回報層數／時間／耗材，並逐項稽核覆寫有沒有生效 |
+| `bambu_slice` | 展平後切片，回報層數／時間／耗材（多色時另列每一色），並逐項稽核覆寫有沒有生效 |
 
 ### 模型
 
@@ -201,7 +224,7 @@ ENV-001「不寫死使用者絕對路徑」的原意是可攜性，但一份起�
 pnpm verify
 ```
 
-`typecheck` → `test`（186 項）→ `build` → `smoke`。smoke 用 `tests/fixtures/datadir` 的假資料目錄，沒裝 Bambu Studio 的機器（含 CI）也能跑。
+`typecheck` → `test`（208 項）→ `build` → `smoke`。smoke 用 `tests/fixtures/datadir` 的假資料目錄，沒裝 Bambu Studio 的機器（含 CI）也能跑。
 
 ### 端到端驗證
 
@@ -211,22 +234,25 @@ pnpm verify
 node scripts/verify-real-slicer.mjs
 ```
 
-它證明五件事：繼承展平後產物採用的是原廠 preset 真值、參數覆寫真的落到產物上、稽核會誠實回報沒生效的項目、挖除體真的改變了幾何，以及修飾體的參數只作用在它涵蓋的區域。
+它證明六件事：繼承展平後產物採用的是原廠 preset 真值、機型有 G-code 模板時產物的開機 G-code 就是那份模板、參數覆寫真的落到產物上、稽核會誠實回報沒生效的項目、挖除體真的改變了幾何，以及修飾體的參數只作用在它涵蓋的區域。
 
-最近一次實跑（P1S ／ 0.16mm High Quality @BBL X1C ／ PLA Matte ／ 20 mm 方塊）：
+最近一次實跑（P2S 0.4 ／ 0.20mm Standard @BBL P2S ／ Generic PLA ／ 20 mm 方塊）：
 
 ```
-繼承鏈：0.16mm High Quality @BBL X1C <- fdm_process_single_0.16
+繼承鏈：0.20mm Standard @BBL P2S <- fdm_process_single_0.20
         <- fdm_process_single_common <- fdm_process_common
 展平後 191 個設定
 
-基準：125 層、746s、3.86 g
-  ✓ sparse_infill_density: preset "15%" → 產物 "15%"
-  ✓ top_shell_layers:      preset "6"   → 產物 "6"
+基準：100 層、1305s、3.6 g
+  ✓ sparse_infill_density: preset "15%"  → 產物 "15%"
+  ✓ top_shell_layers:      preset "5"    → 產物 "5"
   ✓ elefant_foot_compensation: preset "0.15" → 產物 "0.15"
-  ✓ brim_width:            preset "5"   → 產物 "5"
+  ✓ brim_width:            preset "5"    → 產物 "5"
 
-覆寫後：72 層、492s、層高 0.28
+開機 G-code 來源：Bambu Lab P2S 0.4 nozzle template machine_start_gcode
+  ✓ 產物的開機 G-code 與原廠模板逐字相同
+
+覆寫後：72 層、1077s、層高 0.28
   ✓ layer_height:           "0.28" → "0.28"
   ✓ sparse_infill_density:  "10%"  → "10%"
   ✓ wall_loops:             "4"    → "4"
@@ -234,16 +260,16 @@ node scripts/verify-real-slicer.mjs
 
 非破壞性零件：
   讀回：cube=normal_part、topcut=negative_part
-  基準立方體：max_z 20.04 mm、125 層、3.86 g
-  挖掉頂部後：max_z 15.08 mm、 94 層、3.11 g
+  基準立方體：max_z 20 mm、100 層、3.6 g
+  挖掉頂部後：max_z 15 mm、 75 層、2.84 g
 
 局部參數區：
   讀回：dense-half=modifier_part，設定 {"sparse_infill_density":"90%"}
-  填充路徑長度：修飾側 401 mm、另一側 76 mm（比值 5.30）
-  耗材：3.86 g → 6.54 g
+  填充路徑長度：修飾側 371 mm、另一側 77 mm（比值 4.81）
+  耗材：3.6 g → 6.23 g
 ```
 
-修飾體的判準刻意用**空間分布**而不是總耗材：只看總量無法排除「參數被套到整個物件」這種錯法。同一層裡左右兩半的填充路徑長度差 5 倍，才證明它真的只作用在自己涵蓋的區域。
+修飾體的判準刻意用**空間分布**而不是總耗材：只看總量無法排除「參數被套到整個物件」這種錯法。同一層裡左右兩半的填充路徑長度差近 5 倍，才證明它真的只作用在自己涵蓋的區域。
 
 ### 目標導向規劃
 
@@ -333,9 +359,9 @@ node scripts/verify-real-slicer.mjs   # 產出一份 .gcode.3mf
 ```
 src/
   domain/        純邏輯，不認識檔案系統、子行程與網路
-    presets/     繼承展平（本 server 的核心）
+    presets/     繼承展平與機型 G-code 模板（本 server 的核心）
     parameters/  參數知識層、症狀診斷、key 基準
-    slicing/     覆寫路由、G-code 統計、ZIP 讀寫
+    slicing/     覆寫路由、耗材顏色交接、G-code 統計、ZIP 讀寫
     model/       STL 解析、可列印性分析、原始形狀、3MF 組裝與讀回
   ports/         PresetStore、Slicer、ModelCatalog
   adapters/      BambuStudio CLI、Node preset store、Thingiverse、交接目錄

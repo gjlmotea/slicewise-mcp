@@ -97,12 +97,16 @@ describe('safe 目標', () => {
     expect(concerns.has('quality')).toBe(true);
   });
 
-  it('防撞組包含 Z 抬升與繞開已印牆面', () => {
+  it('防撞組包含 Z 抬升與懸空降速；繞開已印牆面歸在表面品質', () => {
     const keys = safe.moves.filter((move) => move.concern === 'collision').map((move) => move.key);
     expect(keys).toContain('filament_z_hop');
-    expect(keys).toContain('reduce_crossing_wall');
     // 捲翹是碰撞的主要起因，所以懸空降速歸在防撞而不是品質。
     expect(keys).toContain('enable_overhang_speed');
+    // reduce_crossing_wall 的官方用途是避免表面料瘤；實測一個碗形件開啟後，
+    // 未抬升的跨外牆空跑反而從 0 次變 10 次，所以不能再當防撞建議。
+    expect(keys).not.toContain('reduce_crossing_wall');
+    const quality = safe.moves.filter((move) => move.concern === 'quality').map((move) => move.key);
+    expect(quality).toContain('reduce_crossing_wall');
   });
 
   it('列舉型建議值使用 BambuStudio 的實際字串', () => {

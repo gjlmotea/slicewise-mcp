@@ -50,18 +50,56 @@ describe('parseGcodeStats', () => {
     expect(parseGcodeStats('; total layer number: 100')).toBeUndefined();
   });
 
-  it('多材列印的第一個重量欄位仍可解析', () => {
+  it('單色不回傳逐色明細', () => {
+    expect(parseGcodeStats(REAL_HEADER)?.filamentBreakdown).toBeUndefined();
+  });
+
+  it('多色列印把各色用量加總，並逐色對應到耗材槽', () => {
+    // 取自一盤四色列印的真實標頭（碗＋三個鑰匙圈，用了第 2–5 槽）。
+    // 只取第一個值會把整盤 43.68 g 報成 4.66 g。
+    const stats = parseGcodeStats(MULTI_COLOUR_HEADER);
+    expect(stats?.filamentGrams).toBe(43.68);
+    expect(stats?.filamentLengthMm).toBe(14645.86);
+    expect(stats?.filamentBreakdown).toEqual([
+      { filament: 2, grams: 4.66, lengthMm: 1563.48 },
+      { filament: 3, grams: 4.03, lengthMm: 1350.27 },
+      { filament: 4, grams: 5.47, lengthMm: 1834.46 },
+      { filament: 5, grams: 29.52, lengthMm: 9897.65 },
+    ]);
+  });
+
+  it('槽位數量與用量對不上時不硬配槽位', () => {
     const stats = parseGcodeStats(
       [
         '; total layer number: 50',
         '; max_z_height: 10.00',
         '; layer_height = 0.2',
-        '; total filament weight [g] : 12.5',
+        '; total filament weight [g] : 1.5,2.5',
+        '; filament: 1,2,3',
       ].join('\n'),
     );
-    expect(stats?.filamentGrams).toBe(12.5);
+    expect(stats?.filamentGrams).toBe(4);
+    expect(stats?.filamentBreakdown).toEqual([{ grams: 1.5 }, { grams: 2.5 }]);
   });
 });
+
+const MULTI_COLOUR_HEADER = [
+  '; HEADER_BLOCK_START',
+  '; BambuStudio 02.07.01.62',
+  '; model printing time: 2h 11m 6s; total estimated time: 2h 18m 8s',
+  '; total layer number: 156',
+  '; total filament length [mm] : 1563.48,1350.27,1834.46,9897.65',
+  '; total filament volume [cm^3] : 3760.61,3247.77,4412.38,23806.65',
+  '; total filament weight [g] : 4.66,4.03,5.47,29.52',
+  '; model label id: 230,252,274,296',
+  '; object max height: 6.00,6.00,6.00,31.20',
+  '; filament_density: 1.24,1.24,1.24,1.24,1.24',
+  '; filament_diameter: 1.75,1.75,1.75,1.75,1.75',
+  '; max_z_height: 31.20',
+  '; filament: 2,3,4,5',
+  '; HEADER_BLOCK_END',
+  '; layer_height = 0.2',
+].join('\n');
 
 describe('parseDurationSeconds', () => {
   it('解析時分秒組合', () => {

@@ -95,16 +95,6 @@ const SAFE: PrintGoal = {
       cost: '幾乎沒有；路徑略長。',
     },
     {
-      key: 'reduce_crossing_wall',
-      direction: 'enable',
-      suggested: '1',
-      concern: 'collision',
-      rationale:
-        '讓空跑路徑繞開已印的牆，而不是從上面跨過去。原廠 preset 預設是關的（0）。' +
-        '跨牆是噴頭擦撞與表面刮痕的主要來源。',
-      cost: '路徑變長，列印時間增加；複雜模型上比較明顯。',
-    },
-    {
       key: 'enable_overhang_speed',
       direction: 'enable',
       concern: 'collision',
@@ -195,6 +185,17 @@ const SAFE: PrintGoal = {
       concern: 'quality',
       rationale: '斜接縫把每層起訖做成漸變，接縫幾乎看不見，也少一個容易堆料凸起的點。',
       cost: '略增時間。',
+    },
+    {
+      key: 'reduce_crossing_wall',
+      direction: 'enable',
+      suggested: '1',
+      concern: 'quality',
+      rationale:
+        '讓空跑路徑繞開已印的牆，而不是從上面跨過去，減少表面料瘤與刮痕。原廠 preset 預設是關的（0）。',
+      cost:
+        '路徑變長，列印時間增加。別把它當防撞設定：Bambu 的 Auto Lift 跨外牆時本來就會抬升，' +
+        '實測一個碗形件開啟後，未抬升的跨外牆空跑反而從 0 次變 10 次。',
     },
   ],
 

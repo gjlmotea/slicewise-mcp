@@ -587,7 +587,12 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
           },
           `切片完成：${result.stats.layerCount} 層` +
             (time === undefined ? '' : `、約 ${formatDuration(time)}`) +
-            (result.stats.filamentGrams === undefined ? '' : `、${result.stats.filamentGrams} g`) +
+            (result.stats.filamentGrams === undefined
+              ? ''
+              : `、${result.stats.filamentGrams} g` +
+                (result.stats.filamentBreakdown === undefined
+                  ? ''
+                  : `（${result.stats.filamentBreakdown.length} 色合計）`)) +
             '。' +
             (missed.length === 0
               ? ''

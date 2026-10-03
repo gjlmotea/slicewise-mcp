@@ -1,4 +1,4 @@
-import type { SliceStats } from '../contracts.js';
+import type { FilamentUsage, SliceStats } from '../contracts.js';
 
 /**
  * 從 BambuStudio 產出的 G-code 標頭解析客觀統計。
@@ -16,6 +16,17 @@ import type { SliceStats } from '../contracts.js';
  * ; max_z_height: 20.00
  * ; layer_height = 0.2
  * ```
+ *
+ * 多色列印時用量欄位是「每一色一個值」，順序對應 `; filament:` 列出的耗材槽：
+ *
+ * ```
+ * ; total filament length [mm] : 1563.48,1350.27,1834.46,9897.65
+ * ; total filament weight [g] : 4.66,4.03,5.47,29.52
+ * ; filament: 2,3,4,5
+ * ```
+ *
+ * 每一色的值已含換色沖洗與擦料塔用量（與 GUI「切片結果」表的 Total 欄相同），
+ * 所以合計就是整盤用量。只取第一個值會把四色盤的 43.68 g 報成 4.66 g。
  */
 
 /** 解析 `1h 2m 3s` 這類時間片段。 */
@@ -42,6 +53,21 @@ function firstNumber(text: string): number | undefined {
   if (match === null) return undefined;
   const value = Number.parseFloat(match[0]);
   return Number.isFinite(value) ? value : undefined;
+}
+
+/** 解析 `4.66,4.03,5.47` 這種逗號分隔的數列；任何一項不是數字就整個不採信。 */
+function numberList(text: string): readonly number[] | undefined {
+  const items = text.split(',').map((item) => item.trim());
+  if (items.length === 0 || items.some((item) => !/^-?\d+(?:\.\d+)?$/.test(item))) return undefined;
+  return items.map((item) => Number.parseFloat(item));
+}
+
+function roundHundredths(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function sum(values: readonly number[]): number {
+  return roundHundredths(values.reduce((total, value) => total + value, 0));
 }
 
 type HeaderField = { readonly key: string; readonly value: string };
@@ -74,8 +100,9 @@ export function parseGcodeStats(gcode: string): SliceStats | undefined {
   let layerHeight: number | undefined;
   let modelPrintTimeSeconds: number | undefined;
   let totalEstimatedTimeSeconds: number | undefined;
-  let filamentGrams: number | undefined;
-  let filamentLengthMm: number | undefined;
+  let filamentWeights: readonly number[] | undefined;
+  let filamentLengths: readonly number[] | undefined;
+  let filamentSlots: readonly number[] | undefined;
 
   for (const line of lines) {
     const field = parseHeaderLine(line);
@@ -93,11 +120,19 @@ export function parseGcodeStats(gcode: string): SliceStats | undefined {
         layerHeight ??= firstNumber(value);
         break;
       case 'total filament weight [g]':
-        filamentGrams ??= firstNumber(value);
+        filamentWeights ??= numberList(value);
         break;
       case 'total filament length [mm]':
-        filamentLengthMm ??= firstNumber(value);
+        filamentLengths ??= numberList(value);
         break;
+      case 'filament': {
+        // 只收正整數清單：這是耗材槽編號，不是設定值。
+        const slots = numberList(value);
+        if (slots !== undefined && slots.every((slot) => Number.isInteger(slot) && slot > 0)) {
+          filamentSlots ??= slots;
+        }
+        break;
+      }
       case 'model printing time': {
         // 這一行同時塞了兩個時間：
         //   `8m 45s; total estimated time: 9m 5s`
@@ -123,15 +158,43 @@ export function parseGcodeStats(gcode: string): SliceStats | undefined {
     return undefined;
   }
 
+  const filamentBreakdown = breakdown(filamentWeights, filamentLengths, filamentSlots);
+
   return {
     layerCount,
     maxZHeight,
     layerHeight,
     ...(modelPrintTimeSeconds === undefined ? {} : { modelPrintTimeSeconds }),
     ...(totalEstimatedTimeSeconds === undefined ? {} : { totalEstimatedTimeSeconds }),
-    ...(filamentGrams === undefined ? {} : { filamentGrams }),
-    ...(filamentLengthMm === undefined ? {} : { filamentLengthMm }),
+    ...(filamentWeights === undefined ? {} : { filamentGrams: sum(filamentWeights) }),
+    ...(filamentLengths === undefined ? {} : { filamentLengthMm: sum(filamentLengths) }),
+    ...(filamentBreakdown === undefined ? {} : { filamentBreakdown }),
   };
+}
+
+/**
+ * 多色時逐色列出用量。單色不回傳 —— 那只是把合計再講一次。
+ * 槽位編號只在與用量欄位數量一致時才採用，對不上就不硬配。
+ */
+function breakdown(
+  weights: readonly number[] | undefined,
+  lengths: readonly number[] | undefined,
+  slots: readonly number[] | undefined,
+): readonly FilamentUsage[] | undefined {
+  const count = Math.max(weights?.length ?? 0, lengths?.length ?? 0);
+  if (count < 2) return undefined;
+  const slotsMatch = slots?.length === count;
+
+  return Array.from({ length: count }, (_, index) => {
+    const slot = slotsMatch ? slots?.[index] : undefined;
+    const grams = weights?.length === count ? weights[index] : undefined;
+    const lengthMm = lengths?.length === count ? lengths[index] : undefined;
+    return {
+      ...(slot === undefined ? {} : { filament: slot }),
+      ...(grams === undefined ? {} : { grams }),
+      ...(lengthMm === undefined ? {} : { lengthMm }),
+    };
+  });
 }
 
 /** 把秒數轉成人類可讀字串，用於工具回覆的摘要句。 */

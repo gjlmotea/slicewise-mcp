@@ -129,6 +129,67 @@ const SYMPTOMS: readonly Symptom[] = [
       '這個症狀最常見的成因是熱床髒污與校平。Bambu 的自動校平不會補償油污，先清潔板材。',
   },
   {
+    id: 'knocked-over',
+    label: '印到一半被撞倒／脫床',
+    aliases: [
+      '撞倒',
+      '撞掉',
+      '撞飛',
+      '被撞',
+      '脫床',
+      '翻倒',
+      '倒下',
+      '被噴頭帶走',
+      'knocked over',
+      'knocked off',
+      'toppled',
+      'fell over',
+      'broke loose',
+    ],
+    mechanism:
+      '前幾層都黏得好好的，印到一半才倒，問題通常不在首層而在槓桿：噴頭在高處碰到零件時的力矩是' +
+      '「力 × 高度」，撐住它的只有底面附著力 ×「底面半徑」。底面小、又高、或上寬下窄（碗、杯、' +
+      '倒錐、人像）的件，越印越高槓桿越大。實例：17 mm 的腳撐 31 mm 高、頂部 38 mm 寬的碗，' +
+      '第一層只有約 200 mm² 貼床。',
+    remedies: [
+      {
+        key: 'brim_type',
+        direction: 'set',
+        suggested: 'outer_only',
+        rationale:
+          '同時加大貼床面積與抵抗翻倒的底面半徑。只對那個物件設（GUI 的 Objects 設定，或 3MF ' +
+          '物件層的 brim_type），其他零件不必跟著留 brim 痕。原廠的 auto_brim 常判定不加。',
+        cost: '要拆 brim，物件底緣會留痕。',
+      },
+      {
+        key: 'brim_width',
+        direction: 'increase',
+        suggested: '8 ~ 10 mm',
+        rationale:
+          '小底面要夠寬才有感：上面那個碗加 8 mm 後第一層貼床從約 200 mm² 變約 770 mm²（3.9 倍），' +
+          '底面半徑也從 8.5 mm 拉到約 16 mm。',
+        cost: '耗材與拆除工作增加；太靠近其他物件時會黏在一起。',
+      },
+      {
+        key: 'hot_plate_temp_initial_layer',
+        direction: 'increase',
+        suggested: '+5 °C',
+        rationale: '小接觸面全靠附著力，首層熱床溫度高一點黏得更牢。',
+        cost: '底部可能略微外擴，要一併看象腿。',
+      },
+    ],
+    materialNotes: {
+      PLA: '收縮小，倒下多半是槓桿與附著問題，不是翹曲。',
+      ABS: '底緣會先翹起，翹起的邊再被噴頭撞到才倒；先看 warping 那一組。',
+      ASA: '同 ABS。',
+    },
+    notAParameterProblem:
+      '先用 bambu_check_printability 看有沒有 small-footprint 或 tall-and-narrow；能換方向讓大面貼床就先換。' +
+      '熱床油污會讓小接觸面直接失效：紋理 PEI 用洗碗精與清水洗。不要先開 reduce_crossing_wall —— ' +
+      'Bambu 原廠的 Auto Lift 在空跑跨越外牆時本來就會抬升；實測上面那個碗，開啟後未抬升的跨外牆空跑' +
+      '反而從 0 次變 10 次。',
+  },
+  {
     id: 'elephant-foot',
     label: '象腿／底部外擴',
     // 使用者實際的講法是「底部一圈胖出來」而不是教科書名詞，

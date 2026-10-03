@@ -51,6 +51,20 @@ export function isMetadataKey(key: string): boolean {
 /** 讀取 preset 原始 JSON 的能力；由 preset store 注入，讓 domain 保持純函式。 */
 export type RawPresetReader = (name: string, kind: PresetKind) => RawPreset | undefined;
 
+/**
+ * 讀取以某個 preset 命名的 G-code 模板。
+ *
+ * BambuStudio 02.07 起，機型專屬的 G-code（`machine_start_gcode`、`change_filament_gcode`、
+ * `layer_change_gcode`、`machine_end_gcode`、`time_lapse_gcode`、`wrapping_detection_gcode`）
+ * 不再寫在 preset JSON 裡，而是在 `BBL.json` 另外登記成 `<preset 名稱> template <key>` 條目，
+ * 內容只有 `name`、`instantiation: "false"` 與那一個 key。葉節點本身不宣告這些 key，
+ * 只走 `inherits` 會一路退回 `fdm_machine_common` 的通用開機段（G28／G29／`M109 S205`、
+ * 在 X10 畫兩條擠出線）—— 那不是任何一台 Bambu 機器的真開機程序。
+ *
+ * 回傳的每一筆 body 只含模板那一個 key。
+ */
+export type TemplateReader = (owner: string, kind: PresetKind) => readonly RawPreset[];
+
 export type RawPreset = {
   readonly name: string;
   readonly kind: PresetKind;
@@ -73,8 +87,19 @@ export class PresetResolutionError extends Error {
  *
  * 同時記錄每個 key 的來源層，讓 `bambu_resolve_preset` 能回答
  * 「這個值是原廠哪一層給的」——而不是要使用者自己翻四層 JSON。
+ *
+ * 有 `readTemplates` 時，每一層先套自己的本體，原廠層再套以該層命名的 G-code 模板（見
+ * {@link TemplateReader}）。這個順序以 GUI 的實際值為準：P2S 0.4 的六個模板與 GUI 專案設定
+ * 逐字相同。子層的模板因此蓋過父層的模板（X1 Carbon 0.6 有自己的模板、同時繼承 0.4），
+ * 沒有模板的子層則沿用父層的（P2S 0.2／0.6／0.8 都繼承 P2S 0.4 的模板）。
+ * 模板值的來源層記成模板條目名稱。
  */
-export function resolvePreset(name: string, kind: PresetKind, read: RawPresetReader): ResolvedPreset {
+export function resolvePreset(
+  name: string,
+  kind: PresetKind,
+  read: RawPresetReader,
+  readTemplates?: TemplateReader,
+): ResolvedPreset {
   const chain: string[] = [];
   const layers: RawPreset[] = [];
   const seen = new Set<string>();
@@ -103,18 +128,25 @@ export function resolvePreset(name: string, kind: PresetKind, read: RawPresetRea
 
   const settings: Record<string, PresetValue> = {};
   const provenance: Record<string, string> = {};
+  const apply = (source: RawPreset): void => {
+    for (const [key, value] of Object.entries(source.body)) {
+      if (isMetadataKey(key)) continue;
+      const normalised = normaliseValue(value);
+      if (normalised === undefined) continue;
+      settings[key] = normalised;
+      provenance[key] = source.name;
+    }
+  };
 
   // layers[0] 是葉節點，所以由後往前覆蓋：根先寫入，葉最後覆蓋。
   for (let index = layers.length - 1; index >= 0; index -= 1) {
     const layer = layers[index];
     if (layer === undefined) continue;
-    for (const [key, value] of Object.entries(layer.body)) {
-      if (isMetadataKey(key)) continue;
-      const normalised = normaliseValue(value);
-      if (normalised === undefined) continue;
-      settings[key] = normalised;
-      provenance[key] = layer.name;
-    }
+    apply(layer);
+    // 模板是原廠條目，只跟原廠層走：使用者若建了同名 preset 並自訂 G-code，
+    // 不能反過來被原廠模板蓋掉。
+    if (layer.origin !== 'system') continue;
+    for (const template of readTemplates?.(layer.name, kind) ?? []) apply(template);
   }
 
   const root = layers[0];

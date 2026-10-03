@@ -24,13 +24,26 @@ import {
  * ```
  * ~/Library/Application Support/BambuStudio/
  *   BambuStudio.conf          目前選用的 machine／process／filament
- *   system/BBL.json           原廠 preset 索引（machine 148、process 276、filament 1873）
+ *   system/BBL.json           原廠 preset 索引（machine 148，其中 89 個是 G-code 模板；process 276、filament 1873）
  *   system/BBL/{machine,process,filament}/*.json
  *   user/<profileId>/{machine,process,filament}/*.json
  * ```
  */
 
 const VENDOR = 'BBL';
+
+/**
+ * `<preset 名稱> template <key>`：BambuStudio 02.07 起從 preset 拆出去的機型 G-code。
+ * 它們不是可選用的 preset，不進一般索引；展平時依繼承鏈逐層套用（見 resolver 的 TemplateReader）。
+ */
+const TEMPLATE_ENTRY = /^(.+) template ([a-z][a-z0-9_]*)$/;
+
+type TemplateEntry = {
+  readonly name: string;
+  /** 模板名稱尾端指定的那一個設定 key。 */
+  readonly key: string;
+  readonly absolutePath: string;
+};
 
 export function defaultDataDir(): string {
   const home = homedir();
@@ -61,6 +74,9 @@ export class NodePresetStore implements PresetStore {
   /** key 為 `${kind}:${name}`。使用者 preset 覆蓋同名原廠 preset。 */
   readonly #index: Map<string, IndexedPreset>;
   readonly #cache = new Map<string, RawPreset>();
+  /** key 為 `${kind}:${owner}`，owner 是模板所屬的 preset 名稱。 */
+  readonly #templates = new Map<string, TemplateEntry[]>();
+  readonly #templateCache = new Map<string, readonly RawPreset[]>();
 
   constructor(dataDir: string = defaultDataDir()) {
     this.dataDir = dataDir;
@@ -92,6 +108,18 @@ export class NodePresetStore implements PresetStore {
         if (typeof name !== 'string' || typeof subPath !== 'string') continue;
 
         const absolutePath = join(systemRoot, VENDOR, subPath);
+
+        const template = TEMPLATE_ENTRY.exec(name);
+        const owner = template?.[1];
+        const key = template?.[2];
+        if (owner !== undefined && key !== undefined) {
+          const bucket = `${kind}:${owner}`;
+          const entries = this.#templates.get(bucket) ?? [];
+          entries.push({ name, key, absolutePath });
+          this.#templates.set(bucket, entries);
+          continue;
+        }
+
         this.#index.set(`${kind}:${name}`, {
           absolutePath,
           entry: {
@@ -178,9 +206,34 @@ export class NodePresetStore implements PresetStore {
     return raw;
   }
 
+  /**
+   * 以 owner 命名的 G-code 模板。
+   *
+   * body 只保留模板名稱指定的那一個 key：模板檔若夾帶其他欄位，或檔案缺了那個 key，
+   * 寧可不套也不要把非預期的值混進切片設定。
+   */
+  readTemplates(owner: string, kind: PresetKind): readonly RawPreset[] {
+    const bucket = `${kind}:${owner}`;
+    const cached = this.#templateCache.get(bucket);
+    if (cached !== undefined) return cached;
+
+    const templates: RawPreset[] = [];
+    const entries = [...(this.#templates.get(bucket) ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      const value = readJson(entry.absolutePath)?.[entry.key];
+      if (value === undefined) continue;
+      templates.push({ name: entry.name, kind, origin: 'system', body: { [entry.key]: value } });
+    }
+    this.#templateCache.set(bucket, templates);
+    return templates;
+  }
+
   resolve(name: string, kind: PresetKind): ResolvedPreset {
-    return resolvePreset(name, kind, (candidate, candidateKind) =>
-      this.readRaw(candidate, candidateKind),
+    return resolvePreset(
+      name,
+      kind,
+      (candidate, candidateKind) => this.readRaw(candidate, candidateKind),
+      (owner, ownerKind) => this.readTemplates(owner, ownerKind),
     );
   }
 

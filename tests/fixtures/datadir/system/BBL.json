@@ -4,7 +4,12 @@
   "machine_model_list": [{ "name": "Bambu Lab P1S", "sub_path": "machine/Bambu Lab P1S.json" }],
   "machine_list": [
     { "name": "fdm_machine_common", "sub_path": "machine/fdm_machine_common.json" },
-    { "name": "Bambu Lab P1S 0.4 nozzle", "sub_path": "machine/Bambu Lab P1S 0.4 nozzle.json" }
+    { "name": "Bambu Lab P1S 0.4 nozzle", "sub_path": "machine/Bambu Lab P1S 0.4 nozzle.json" },
+    { "name": "Bambu Lab P1S 0.6 nozzle", "sub_path": "machine/Bambu Lab P1S 0.6 nozzle.json" },
+    {
+      "name": "Bambu Lab P1S 0.4 nozzle template machine_start_gcode",
+      "sub_path": "machine/Bambu Lab P1S 0.4 nozzle template machine_start_gcode.json"
+    }
   ],
   "process_list": [
     { "name": "fdm_process_common", "sub_path": "process/fdm_process_common.json" },

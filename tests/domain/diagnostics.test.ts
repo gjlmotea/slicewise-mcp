@@ -25,6 +25,21 @@ describe('matchSymptoms', () => {
     expect(matches[0]?.score).toBeGreaterThan(1);
   });
 
+  it('印到一半被撞倒：對到 knocked-over，處置從物件層 brim 開始', () => {
+    // 這句是真實案例的原始描述，當時症狀庫沒有這一項，什麼都比對不到。
+    const matches = matchSymptoms('印到一半，底面小、上面往外張開的碗被噴頭撞倒脫床，後面變成一團麵條');
+    expect(matches[0]?.symptom.id).toBe('knocked-over');
+    expect(matches[0]?.symptom.remedies[0]?.key).toBe('brim_type');
+  });
+
+  it('被撞倒不建議 reduce_crossing_wall：實測它會增加未抬升的跨牆空跑', () => {
+    const symptom = getSymptom('knocked-over');
+    expect(symptom).toBeDefined();
+    const keys = symptom?.remedies.map((remedy) => remedy.key) ?? [];
+    expect(keys.length).toBeGreaterThan(0);
+    expect(keys).not.toContain('reduce_crossing_wall');
+  });
+
   it('比對不到時回空陣列，不做模糊猜測', () => {
     // 猜錯症狀會給出讓情況更糟的建議，所以寧可回空。
     expect(matchSymptoms('這台機器的顏色不好看')).toEqual([]);
