@@ -6,7 +6,7 @@
   "description": "Bambu Studio companion MCP：展平 preset 繼承鏈以修正 CLI 切片失真，並提供參數知識層、切片、模型可列印性與模型搜尋工具面。",
   "license": "UNLICENSED",
   "engines": {
-    "node": "24.21.0"
+    "node": "24.22.2"
   },
   "packageManager": "pnpm@11.17.0",
   "main": "./dist/index.js",
