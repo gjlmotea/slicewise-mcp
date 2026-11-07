@@ -1,8 +1,9 @@
 import type { Vec3 } from '../contracts.js';
 
 /**
- * 索引式網格。3MF 用的是「頂點清單 + 三角形索引」，跟 STL 每個三角形各存三個頂點不同，
- * 所以這裡另立一個型別，不重用 `stl.ts` 的 `Triangle`。
+ * Indexed mesh. 3MF uses "vertex list + triangle indices", unlike STL where every triangle
+ * stores its own three vertices, so this is a separate type rather than a reuse of `stl.ts`'s
+ * `Triangle`.
  */
 export type IndexedMesh = {
   readonly vertices: readonly Vec3[];
@@ -19,11 +20,12 @@ const MIN_SEGMENTS = 8;
 const MAX_SEGMENTS = 128;
 
 /**
- * 產生原始形狀，以 `center` 為中心。
+ * Generates a primitive shape centred on `center`.
  *
- * 位置直接烘進頂點座標，component transform 用單位矩陣。
- * 這樣「檔案裡的座標」就等於「實際位置」，除錯時不必在兩個矩陣之間換算；
- * 使用者之後在 Bambu Studio 裡搬動零件，Studio 會自己在上面疊它的矩陣，不受影響。
+ * The position is baked straight into the vertex coordinates and the component transform is
+ * the identity. That way "coordinates in the file" equal "actual position", and debugging needs
+ * no conversion between two matrices; if the user later moves the part in Bambu Studio, Studio
+ * stacks its own matrix on top, which is unaffected.
  */
 export function buildPrimitive(shape: PrimitiveShape, center: Vec3 = { x: 0, y: 0, z: 0 }): IndexedMesh {
   switch (shape.kind) {
@@ -57,7 +59,7 @@ function boxMesh(size: Vec3, c: Vec3): IndexedMesh {
     { x: c.x - hx, y: c.y + hy, z: c.z + hz },
   ];
 
-  // 繞序讓法向量朝外；經人工驗算，與 tests/fixtures/geometry.ts 的立方體一致。
+  // Winding order keeps normals pointing outward; checked by hand to match the cube in tests/fixtures/geometry.ts.
   const triangles: (readonly [number, number, number])[] = [
     [0, 2, 1], [0, 3, 2], // -Z
     [4, 5, 6], [4, 6, 7], // +Z
@@ -80,8 +82,8 @@ function cylinderMesh(diameter: number, height: number, segments: number, c: Vec
     const angle = (i / segments) * Math.PI * 2;
     const x = c.x + radius * Math.cos(angle);
     const y = c.y + radius * Math.sin(angle);
-    vertices.push({ x, y, z: c.z - hz }); // 下環：偶數索引 2i
-    vertices.push({ x, y, z: c.z + hz }); // 上環：奇數索引 2i+1
+    vertices.push({ x, y, z: c.z - hz }); // bottom ring: even index 2i
+    vertices.push({ x, y, z: c.z + hz }); // top ring: odd index 2i+1
   }
 
   const bottomCentre = vertices.length;
@@ -96,9 +98,9 @@ function cylinderMesh(diameter: number, height: number, segments: number, c: Vec
     const b1 = next * 2;
     const t1 = next * 2 + 1;
 
-    triangles.push([b0, b1, t1], [b0, t1, t0]); // 側面
-    triangles.push([bottomCentre, b1, b0]); // 底面，法向量朝 -Z
-    triangles.push([topCentre, t0, t1]); // 頂面，法向量朝 +Z
+    triangles.push([b0, b1, t1], [b0, t1, t0]); // side
+    triangles.push([bottomCentre, b1, b0]); // bottom cap, normal points -Z
+    triangles.push([topCentre, t0, t1]); // top cap, normal points +Z
   }
 
   return { vertices, triangles };
@@ -110,7 +112,7 @@ function sphereMesh(diameter: number, segments: number, c: Vec3): IndexedMesh {
   const vertices: Vec3[] = [];
   const triangles: (readonly [number, number, number])[] = [];
 
-  // 兩極單獨處理，避免退化三角形。
+  // The poles are handled separately to avoid degenerate triangles.
   const north = 0;
   vertices.push({ x: c.x, y: c.y, z: c.z + radius });
 
@@ -158,7 +160,7 @@ function sphereMesh(diameter: number, segments: number, c: Vec3): IndexedMesh {
   return { vertices, triangles };
 }
 
-/** 索引式網格的外框，用於回報與碰撞檢查。 */
+/** Bounds of an indexed mesh, used for reporting and collision checks. */
 export function meshBounds(mesh: IndexedMesh): { readonly min: Vec3; readonly max: Vec3 } {
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;

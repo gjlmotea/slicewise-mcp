@@ -1,36 +1,37 @@
 import type { PresetKind } from '../contracts.js';
 
 /**
- * 參數知識層。
+ * Parameter knowledge layer.
  *
- * BambuStudio 展平後有 550 個以上的設定 key，但把整份倒給模型只會得到亂調。
- * 這份 catalog 挑出真正會改變列印結果的參數，記錄它的語意、單位、合理範圍、
- * 調高與調低各自的代價，以及彼此的牽連關係。
+ * Once flattened, BambuStudio has more than 550 setting keys, but dumping all of them on a
+ * model only produces random tuning. This catalog picks the parameters that actually change
+ * the print result and records their meaning, unit, sensible range, the cost of raising and
+ * of lowering each one, and how they relate to each other.
  *
- * 每個 key 都對照過本機 BambuStudio 02.07.01.62 展平後的實際設定，
- * 不是憑印象寫的參數名。
+ * Every key has been checked against the actual flattened settings of a local
+ * BambuStudio 02.07.01.62, not written from memory.
  */
 
 export type ParameterValueType = 'length-mm' | 'percentage' | 'temperature-c' | 'speed-mms' | 'angle-deg' | 'count' | 'boolean' | 'enum' | 'ratio';
 
 export type ParameterSpec = {
   readonly key: string;
-  /** 這個 key 歸哪一種 preset 管；寫使用者 preset 時必須放對檔案。 */
+  /** Which kind of preset owns this key; when writing a user preset it must go in the right file. */
   readonly owner: PresetKind;
   readonly group: ParameterGroup;
   readonly label: string;
   readonly valueType: ParameterValueType;
   readonly unit?: string;
-  /** 建議操作區間；超出通常代表你在解錯的問題。 */
+  /** Recommended working range; going outside it usually means you are solving the wrong problem. */
   readonly typicalRange?: { readonly min: number; readonly max: number };
   readonly enumValues?: readonly string[];
-  /** 這個參數在做什麼。 */
+  /** What this parameter does. */
   readonly whatItDoes: string;
-  /** 調高會怎樣。 */
+  /** What happens when you raise it. */
   readonly raising: string;
-  /** 調低會怎樣。 */
+  /** What happens when you lower it. */
   readonly lowering: string;
-  /** 一起看的參數。 */
+  /** Parameters to look at together with this one. */
   readonly related: readonly string[];
 };
 
@@ -47,714 +48,714 @@ export type ParameterGroup =
   | 'surface';
 
 const SPECS: readonly ParameterSpec[] = [
-  // ── 品質與層 ───────────────────────────────────────────────────────────
+  // ── Quality and layers ────────────────────────────────────────────────
   {
     key: 'layer_height',
     owner: 'process',
     group: 'quality',
-    label: '層高',
+    label: 'Layer height',
     valueType: 'length-mm',
     unit: 'mm',
     typicalRange: { min: 0.06, max: 0.32 },
-    whatItDoes: '每一層的厚度，是列印時間與表面品質之間最強的單一槓桿。上限約為噴頭直徑的 75%。',
-    raising: '層數變少、時間近乎線性下降，但階梯紋明顯、曲面變粗、層間結合面積增加所以 Z 向強度略升。',
-    lowering: '曲面細緻、小特徵解析度變好，但時間大幅增加，且過薄時擠出量不穩定容易欠擠出。',
+    whatItDoes: 'Thickness of each layer; the strongest single lever between print time and surface quality. The upper limit is about 75% of the nozzle diameter.',
+    raising: 'Fewer layers and an almost linear drop in time, but visible stair-stepping, coarser curves, and slightly higher Z strength because the bonded area between layers grows.',
+    lowering: 'Finer curves and better resolution on small features, but much longer prints, and when too thin the extrusion becomes unstable and prone to under-extrusion.',
     related: ['initial_layer_print_height', 'line_width', 'layer_height'],
   },
   {
     key: 'initial_layer_print_height',
     owner: 'process',
     group: 'adhesion',
-    label: '首層層高',
+    label: 'Initial layer height',
     valueType: 'length-mm',
     unit: 'mm',
     typicalRange: { min: 0.1, max: 0.3 },
-    whatItDoes: '第一層的厚度。厚一點可以吸收熱床不平與校平誤差，是首層不黏最先該動的參數之一。',
-    raising: '對熱床不平容忍度變高、附著更穩，但首層尺寸精度變差、象腿風險上升。',
-    lowering: '首層尺寸更準，但對校平誤差極度敏感，容易局部不黏。',
+    whatItDoes: 'Thickness of the first layer. A thicker one absorbs an uneven bed and levelling error, and it is one of the first parameters to change when the first layer does not stick.',
+    raising: 'More tolerant of an uneven bed and steadier adhesion, but worse first-layer dimensional accuracy and a higher elephant\'s foot risk.',
+    lowering: 'More accurate first-layer dimensions, but extremely sensitive to levelling error and prone to patches that do not stick.',
     related: ['initial_layer_line_width', 'initial_layer_flow_ratio', 'elefant_foot_compensation'],
   },
   {
     key: 'initial_layer_line_width',
     owner: 'process',
     group: 'adhesion',
-    label: '首層線寬',
+    label: 'Initial layer line width',
     valueType: 'length-mm',
     unit: 'mm',
     typicalRange: { min: 0.3, max: 0.7 },
-    whatItDoes: '第一層的擠出線寬。加寬能增加與熱床的接觸面積。',
-    raising: '附著面積變大、首層更穩，但象腿與邊緣毛邊風險上升。',
-    lowering: '首層輪廓更銳利，但附著力下降。',
+    whatItDoes: 'Extrusion line width of the first layer. Widening it increases the contact area with the bed.',
+    raising: 'Larger adhesion area and a steadier first layer, but a higher risk of elephant\'s foot and edge flash.',
+    lowering: 'Sharper first-layer outline, but weaker adhesion.',
     related: ['initial_layer_print_height', 'initial_layer_flow_ratio', 'line_width'],
   },
   {
     key: 'initial_layer_flow_ratio',
     owner: 'process',
     group: 'adhesion',
-    label: '首層流量倍率',
+    label: 'Initial layer flow ratio',
     valueType: 'ratio',
     typicalRange: { min: 0.9, max: 1.1 },
-    whatItDoes: '第一層的擠出倍率。略微過擠出可以把材料壓進板材紋理裡。',
-    raising: '首層被壓實、附著明顯改善，過高會堆出毛邊並加重象腿。',
-    lowering: '首層更平整，但容易出現線與線之間的縫隙而附著不良。',
+    whatItDoes: 'Extrusion multiplier for the first layer. Slight over-extrusion presses material into the texture of the plate.',
+    raising: 'The first layer is squished in and adhesion clearly improves; too high piles up flash and worsens elephant\'s foot.',
+    lowering: 'A flatter first layer, but gaps tend to appear between lines and adhesion suffers.',
     related: ['initial_layer_print_height', 'initial_layer_line_width', 'elefant_foot_compensation'],
   },
   {
     key: 'initial_layer_speed',
     owner: 'process',
     group: 'adhesion',
-    label: '首層速度',
+    label: 'Initial layer speed',
     valueType: 'speed-mms',
     unit: 'mm/s',
     typicalRange: { min: 20, max: 100 },
-    whatItDoes: '第一層的列印速度。慢速讓材料有時間熔接並攤平。',
-    raising: '省時，但附著品質下降。',
-    lowering: '附著明顯改善，只影響一層所以總時間代價很小。',
+    whatItDoes: 'Print speed of the first layer. Going slowly gives the material time to fuse and spread out.',
+    raising: 'Saves time, but adhesion quality drops.',
+    lowering: 'Adhesion clearly improves, and since it only affects one layer the total time cost is small.',
     related: ['initial_layer_infill_speed', 'initial_layer_flow_ratio', 'hot_plate_temp_initial_layer'],
   },
   {
     key: 'initial_layer_infill_speed',
     owner: 'process',
     group: 'adhesion',
-    label: '首層填充速度',
+    label: 'Initial layer infill speed',
     valueType: 'speed-mms',
     unit: 'mm/s',
     typicalRange: { min: 20, max: 120 },
-    whatItDoes: '第一層內部實心區的速度。外框即使已黏住，高速填充仍可能把小接觸面扯離熱床。',
-    raising: '首層較快，但小零件與尖角更容易被拖動。',
-    lowering: '首層附著更穩，代價只集中在第一層。',
+    whatItDoes: 'Speed of the solid interior of the first layer. Even when the outline has stuck, fast infill can still pull a small contact area off the bed.',
+    raising: 'A faster first layer, but small parts and sharp corners are more easily dragged along.',
+    lowering: 'Steadier first-layer adhesion; the cost is confined to the first layer.',
     related: ['initial_layer_speed', 'initial_layer_flow_ratio'],
   },
   {
     key: 'line_width',
     owner: 'process',
     group: 'quality',
-    label: '線寬',
+    label: 'Line width',
     valueType: 'length-mm',
     unit: 'mm',
     typicalRange: { min: 0.3, max: 0.65 },
-    whatItDoes: '預設擠出線寬。通常設在噴頭直徑的 100%–125%。',
-    raising: '流量增加、列印變快、層間黏合變好，但細節解析度下降。',
-    lowering: '細節較好，但流量下降拖慢速度，過細時壁面容易有空隙。',
+    whatItDoes: 'Default extrusion line width. Usually set to 100%–125% of the nozzle diameter.',
+    raising: 'Higher flow, faster printing and better layer bonding, but lower detail resolution.',
+    lowering: 'Better detail, but lower flow slows the print, and when too thin the walls tend to have gaps.',
     related: ['inner_wall_line_width', 'initial_layer_line_width', 'layer_height'],
   },
 
-  // ── 強度 ──────────────────────────────────────────────────────────────
+  // ── Strength ──────────────────────────────────────────────────────────
   {
     key: 'wall_loops',
     owner: 'process',
     group: 'strength',
-    label: '牆層數',
+    label: 'Wall loops',
     valueType: 'count',
     typicalRange: { min: 2, max: 5 },
-    whatItDoes: '每層的周壁圈數。對受力件而言，增加牆層比增加填充密度更有效率。',
-    raising: '強度、尤其抗彎與螺絲咬合明顯提升，時間與耗材增加；孔洞內縮風險上升。',
-    lowering: '省時省料，但薄壁件會變軟、易分層破裂。',
+    whatItDoes: 'Number of perimeter loops per layer. For load-bearing parts, adding walls is more efficient than raising infill density.',
+    raising: 'Clearly stronger, especially in bending and screw retention; more time and filament, and a higher risk of holes shrinking.',
+    lowering: 'Saves time and filament, but thin-walled parts become flexible and prone to delaminating and cracking.',
     related: ['sparse_infill_density', 'top_shell_layers', 'alternate_extra_wall'],
   },
   {
     key: 'sparse_infill_density',
     owner: 'process',
     group: 'strength',
-    label: '填充密度',
+    label: 'Sparse infill density',
     valueType: 'percentage',
     unit: '%',
     typicalRange: { min: 0, max: 100 },
-    whatItDoes: '內部填充佔比。超過約 40% 之後強度增益就開始不划算，該改動牆層數。',
-    raising: '剛性與頂面支撐變好，但時間、耗材與翹曲內應力都上升。',
-    lowering: '快且輕，但頂層容易塌陷（枕紋）、整體變軟。',
+    whatItDoes: 'Fraction of the interior filled with infill. Beyond about 40% the strength gain stops being worth it; change the wall loops instead.',
+    raising: 'Better stiffness and top-surface support, but more time, filament and warping-inducing internal stress.',
+    lowering: 'Fast and light, but the top layers tend to sag (pillowing) and the part becomes flexible overall.',
     related: ['sparse_infill_pattern', 'wall_loops', 'top_shell_layers'],
   },
   {
     key: 'sparse_infill_pattern',
     owner: 'process',
     group: 'strength',
-    label: '填充圖樣',
+    label: 'Sparse infill pattern',
     valueType: 'enum',
     enumValues: ['grid', 'gyroid', 'cubic', 'adaptivecubic', 'honeycomb', 'line', 'triangles', 'lightning', 'crosshatch'],
-    whatItDoes: '填充的幾何結構，決定各向強度與列印速度。',
-    raising: 'gyroid 各向同性且無自交、cubic 兼顧強度與速度、lightning 只撐頂面極省料。',
-    lowering: 'grid 快但每層自交會撞噴頭、line 最弱。',
+    whatItDoes: 'Geometry of the infill, which determines strength in each direction and print speed.',
+    raising: 'gyroid is isotropic and never crosses itself; cubic balances strength and speed; lightning only supports the top surfaces and uses very little filament.',
+    lowering: 'grid is fast but crosses itself on every layer, which the nozzle can hit; line is the weakest.',
     related: ['sparse_infill_density', 'infill_direction'],
   },
   {
     key: 'top_shell_layers',
     owner: 'process',
     group: 'surface',
-    label: '頂層層數',
+    label: 'Top shell layers',
     valueType: 'count',
     typicalRange: { min: 3, max: 8 },
-    whatItDoes: '頂面實心層數。頂面有洞或凹陷時，先加這個而不是加填充。',
-    raising: '頂面更平整密實，時間增加。',
-    lowering: '省時，但低填充密度下頂面會塌出枕紋與孔洞。',
+    whatItDoes: 'Number of solid top layers. When the top surface has holes or dips, add these first rather than more infill.',
+    raising: 'A flatter, denser top surface; more time.',
+    lowering: 'Saves time, but at low infill density the top surface sags into pillowing and holes.',
     related: ['sparse_infill_density', 'top_surface_pattern', 'bottom_shell_layers'],
   },
   {
     key: 'bottom_shell_layers',
     owner: 'process',
     group: 'surface',
-    label: '底層層數',
+    label: 'Bottom shell layers',
     valueType: 'count',
     typicalRange: { min: 2, max: 6 },
-    whatItDoes: '底面實心層數。',
-    raising: '底面更密實、不透光，時間增加。',
-    lowering: '省時，但底面可能出現孔隙。',
+    whatItDoes: 'Number of solid bottom layers.',
+    raising: 'A denser, opaque bottom surface; more time.',
+    lowering: 'Saves time, but the bottom surface may show gaps.',
     related: ['top_shell_layers', 'initial_layer_print_height'],
   },
 
-  // ── 附著與翹曲 ────────────────────────────────────────────────────────
+  // ── Adhesion and warping ──────────────────────────────────────────────
   {
     key: 'brim_type',
     owner: 'process',
     group: 'adhesion',
-    label: 'Brim 類型',
+    label: 'Brim type',
     valueType: 'enum',
     enumValues: ['auto_brim', 'brim_ears', 'outer_only', 'inner_only', 'outer_and_inner', 'no_brim'],
-    whatItDoes: '在模型周圍加印裙邊以增加附著面積，是對抗翹邊與小底面脫落最直接的手段。',
-    raising: 'outer_only／auto_brim 附著最穩；brim_ears 只在尖角加耳朵，省料又好拆。',
-    lowering: 'no_brim 表面乾淨不用後處理，但高收縮材料或小底面容易翹起脫落。',
+    whatItDoes: 'Prints a skirt-like brim around the model to increase the adhesion area; the most direct countermeasure against warping and small footprints coming loose.',
+    raising: 'outer_only / auto_brim give the steadiest adhesion; brim_ears only adds ears at sharp corners, using less filament and coming off easily.',
+    lowering: 'no_brim leaves a clean surface with no post-processing, but high-shrinkage materials or small footprints tend to lift and come loose.',
     related: ['brim_width', 'brim_object_gap', 'hot_plate_temp'],
   },
   {
     key: 'brim_width',
     owner: 'process',
     group: 'adhesion',
-    label: 'Brim 寬度',
+    label: 'Brim width',
     valueType: 'length-mm',
     unit: 'mm',
     typicalRange: { min: 0, max: 10 },
-    whatItDoes: 'Brim 向外延伸的寬度。',
-    raising: '抓地力提升，但耗材與拆除工作變多，且可能在表面留下痕跡。',
-    lowering: '好拆，但抗翹能力下降。',
+    whatItDoes: 'How far the brim extends outward.',
+    raising: 'Better grip, but more filament and removal work, and it may leave marks on the surface.',
+    lowering: 'Easy to remove, but less resistance to warping.',
     related: ['brim_type', 'brim_object_gap'],
   },
   {
     key: 'brim_object_gap',
     owner: 'process',
     group: 'adhesion',
-    label: 'Brim 與模型間距',
+    label: 'Brim-object gap',
     valueType: 'length-mm',
     unit: 'mm',
     typicalRange: { min: 0, max: 0.3 },
-    whatItDoes: '控制 brim 與模型之間保留多少間距，直接影響抓地力與拆除難度。',
-    raising: '更好拆、不易黏死活動間隙，但抓地力下降。',
-    lowering: '抓得更牢，但可能難拆或在 print-in-place 間隙形成黏連。',
+    whatItDoes: 'How much gap is left between the brim and the model; directly affects grip and how hard the brim is to remove.',
+    raising: 'Easier to remove and less likely to fuse moving clearances, but less grip.',
+    lowering: 'Holds more firmly, but may be hard to remove or bridge across print-in-place clearances.',
     related: ['brim_type', 'brim_width'],
   },
   {
     key: 'elefant_foot_compensation',
     owner: 'process',
     group: 'accuracy',
-    label: '象腿補償',
+    label: 'Elephant foot compensation',
     valueType: 'length-mm',
     unit: 'mm',
     typicalRange: { min: 0, max: 0.4 },
-    whatItDoes: '把第一層向內縮，抵銷首層被壓扁而外擴的「象腿」。Bambu 原廠 preset 預設 0.15。',
-    raising: '底部邊緣更接近設計尺寸，過大會讓首層附著面積變小而脫落。',
-    lowering: '底緣外擴，配合面（例如插銷孔）會裝不進去。',
+    whatItDoes: 'Shrinks the first layer inward to cancel the "elephant\'s foot" caused by the squished first layer spreading outward. Bambu\'s stock presets default to 0.15.',
+    raising: 'The bottom edge comes closer to the design dimensions; too much shrinks the first-layer contact area and the part comes loose.',
+    lowering: 'The bottom edge flares out, and mating features (such as pin holes) will not fit.',
     related: ['initial_layer_print_height', 'xy_contour_compensation'],
   },
   {
     key: 'hot_plate_temp_initial_layer',
     owner: 'filament',
     group: 'temperature',
-    label: '首層熱床溫度',
+    label: 'Initial layer bed temperature',
     valueType: 'temperature-c',
     unit: '°C',
     typicalRange: { min: 0, max: 110 },
-    whatItDoes: '第一層的熱床溫度。附著問題先動這個，再動機械手段。',
-    raising: '附著力提升，但過高會讓底部軟化外擴、加重象腿。',
-    lowering: '底面更銳利，但容易翹邊或整件脫落。',
+    whatItDoes: 'Bed temperature for the first layer. For adhesion problems change this first, before mechanical measures.',
+    raising: 'Better adhesion, but too high softens the bottom so it spreads outward, worsening elephant\'s foot.',
+    lowering: 'A sharper bottom surface, but prone to warping or the whole part coming loose.',
     related: ['hot_plate_temp', 'brim_type', 'initial_layer_print_height'],
   },
   {
     key: 'draft_shield',
     owner: 'process',
     group: 'adhesion',
-    label: '防風牆',
+    label: 'Draft shield',
     valueType: 'enum',
     enumValues: ['disabled', 'limited', 'enabled'],
-    whatItDoes: '在模型外圍加印一圈高牆隔絕氣流，抑制 ABS／ASA 這類高收縮材料的翹曲。',
-    raising: '保溫效果好、翹曲大幅下降，但耗材與時間明顯增加。',
-    lowering: '省料，開放式機型印高收縮材料時翹曲風險高。',
+    whatItDoes: 'Prints a tall wall around the model to block airflow, suppressing warping of high-shrinkage materials such as ABS / ASA.',
+    raising: 'Good heat retention and much less warping, but noticeably more filament and time.',
+    lowering: 'Saves filament; on open-frame printers, high-shrinkage materials carry a high warping risk.',
     related: ['brim_type', 'chamber_temperatures'],
   },
 
-  // ── 溫度 ──────────────────────────────────────────────────────────────
+  // ── Temperature ───────────────────────────────────────────────────────
   {
     key: 'nozzle_temperature',
     owner: 'filament',
     group: 'temperature',
-    label: '噴頭溫度',
+    label: 'Nozzle temperature',
     valueType: 'temperature-c',
     unit: '°C',
     typicalRange: { min: 170, max: 300 },
-    whatItDoes: '主要列印溫度。同時影響層間結合強度、牽絲程度與表面光澤。',
-    raising: '層間結合變強、流動性變好可以印更快，但牽絲、滲料與過熱下垂變嚴重。',
-    lowering: '細節銳利、牽絲減少，但層裂風險上升，過低會欠擠出甚至堵頭。',
+    whatItDoes: 'Main printing temperature. Affects layer bond strength, stringing and surface gloss all at once.',
+    raising: 'Stronger layer bonding and better flow allow faster printing, but stringing, oozing and heat sag get worse.',
+    lowering: 'Sharper detail and less stringing, but a higher risk of layer splitting; too low causes under-extrusion or even a clog.',
     related: ['nozzle_temperature_initial_layer', 'filament_retraction_length', 'fan_max_speed'],
   },
   {
     key: 'nozzle_temperature_initial_layer',
     owner: 'filament',
     group: 'temperature',
-    label: '首層噴頭溫度',
+    label: 'Initial layer nozzle temperature',
     valueType: 'temperature-c',
     unit: '°C',
     typicalRange: { min: 170, max: 300 },
-    whatItDoes: '第一層的噴頭溫度，通常比主體高 5 °C 幫助熔接到熱床。',
-    raising: '首層附著更好。',
-    lowering: '首層附著變差。',
+    whatItDoes: 'Nozzle temperature for the first layer, usually 5 °C above the rest to help it fuse to the bed.',
+    raising: 'Better first-layer adhesion.',
+    lowering: 'Worse first-layer adhesion.',
     related: ['nozzle_temperature', 'hot_plate_temp_initial_layer'],
   },
 
-  // ── 冷卻 ──────────────────────────────────────────────────────────────
+  // ── Cooling ───────────────────────────────────────────────────────────
   {
     key: 'fan_max_speed',
     owner: 'filament',
     group: 'cooling',
-    label: '最大風扇轉速',
+    label: 'Maximum fan speed',
     valueType: 'percentage',
     unit: '%',
     typicalRange: { min: 0, max: 100 },
-    whatItDoes: '模型冷卻風扇上限。PLA 幾乎全開，ABS／ASA 必須壓低否則層裂。',
-    raising: '懸空與橋接更挺、細節更銳利，但層間結合變弱、高收縮材料翹曲加劇。',
-    lowering: '層間結合變強、翹曲下降，但懸空會下垂、小件會過熱變形。',
+    whatItDoes: 'Upper limit of the part cooling fan. PLA runs it almost fully on; ABS / ASA must keep it low or the layers split.',
+    raising: 'Overhangs and bridges hold up better and detail is sharper, but layer bonding weakens and high-shrinkage materials warp more.',
+    lowering: 'Stronger layer bonding and less warping, but overhangs droop and small parts overheat and deform.',
     related: ['fan_min_speed', 'slow_down_layer_time', 'nozzle_temperature'],
   },
   {
     key: 'fan_min_speed',
     owner: 'filament',
     group: 'cooling',
-    label: '最小風扇轉速',
+    label: 'Minimum fan speed',
     valueType: 'percentage',
     unit: '%',
     typicalRange: { min: 0, max: 100 },
-    whatItDoes: '一般列印時的風扇下限。',
-    raising: '整體冷卻更強。',
-    lowering: '層間結合更好。',
+    whatItDoes: 'Lower limit of the fan during normal printing.',
+    raising: 'Stronger cooling overall.',
+    lowering: 'Better layer bonding.',
     related: ['fan_max_speed', 'slow_down_layer_time'],
   },
   {
     key: 'slow_down_layer_time',
     owner: 'filament',
     group: 'cooling',
-    label: '單層最短時間',
+    label: 'Minimum layer time',
     valueType: 'count',
     unit: 's',
     typicalRange: { min: 0, max: 30 },
-    whatItDoes: '單層若快於這個秒數就自動減速，給前一層時間凝固。小尖端變形時最有效。',
-    raising: '小截面不再過熱糊掉，但總時間增加。',
-    lowering: '快，但小件頂端會軟塌。',
+    whatItDoes: 'If a layer would finish faster than this many seconds, the printer slows down automatically to give the previous layer time to solidify. Most effective when small tips deform.',
+    raising: 'Small cross-sections no longer overheat into a blob, but total time increases.',
+    lowering: 'Fast, but the tops of small parts go soft and slump.',
     related: ['fan_max_speed', 'outer_wall_speed'],
   },
 
-  // ── 回抽與牽絲 ────────────────────────────────────────────────────────
+  // ── Retraction and stringing ──────────────────────────────────────────
   {
     key: 'filament_retraction_length',
     owner: 'filament',
     group: 'retraction',
-    label: '回抽長度',
+    label: 'Retraction length',
     valueType: 'length-mm',
     unit: 'mm',
     typicalRange: { min: 0, max: 2 },
-    whatItDoes: '空跑前回抽的料量。直驅擠出機（Bambu 全系列）通常 0.4–1.0 mm 就夠。',
-    raising: '牽絲與滲料減少，但過長會在噴頭內造成空洞導致下一段欠擠出，也增加堵頭風險。',
-    lowering: '流量恢復快，但牽絲變多。',
+    whatItDoes: 'Amount of filament retracted before a travel move. Direct-drive extruders (every Bambu model) usually need only 0.4–1.0 mm.',
+    raising: 'Less stringing and oozing, but too long leaves a void in the nozzle that under-extrudes the next segment, and raises the clog risk.',
+    lowering: 'Flow recovers quickly, but more stringing.',
     related: ['filament_retraction_speed', 'filament_z_hop', 'nozzle_temperature'],
   },
   {
     key: 'filament_retraction_speed',
     owner: 'filament',
     group: 'retraction',
-    label: '回抽速度',
+    label: 'Retraction speed',
     valueType: 'speed-mms',
     unit: 'mm/s',
     typicalRange: { min: 15, max: 60 },
-    whatItDoes: '回抽的速度。',
-    raising: '斷料更乾脆、牽絲更少，但軟料（TPU）會被磨損甚至卡住。',
-    lowering: '對軟料友善，牽絲增加。',
+    whatItDoes: 'Speed of the retraction.',
+    raising: 'Cleaner break-off and less stringing, but soft filament (TPU) gets ground down or even jams.',
+    lowering: 'Gentle on soft filament; more stringing.',
     related: ['filament_retraction_length', 'deretraction_speed'],
   },
   {
     key: 'filament_z_hop',
     owner: 'filament',
     group: 'retraction',
-    label: 'Z 抬升',
+    label: 'Z hop',
     valueType: 'length-mm',
     unit: 'mm',
     typicalRange: { min: 0, max: 1 },
-    whatItDoes: '空跑時抬起噴頭，避免刮到已列印表面或撞倒翹起的邊角。',
-    raising: '表面刮痕與撞件風險下降，但每次抬降都增加時間，也可能多留下拉絲點。',
-    lowering: '快，但噴頭可能刮傷頂面。',
+    whatItDoes: 'Lifts the nozzle during travel moves so it does not scrape printed surfaces or knock over curled-up edges and corners.',
+    raising: 'Lower risk of surface scratches and collisions, but every lift and lower adds time and may leave extra stringing points.',
+    lowering: 'Fast, but the nozzle may scratch top surfaces.',
     related: ['filament_retraction_length', 'reduce_crossing_wall', 'z_hop'],
   },
   {
     key: 'z_hop',
     owner: 'machine',
     group: 'retraction',
-    label: 'Z 抬升（機器預設）',
+    label: 'Z hop (machine default)',
     valueType: 'length-mm',
     unit: 'mm',
     typicalRange: { min: 0, max: 1 },
     whatItDoes:
-      '機器層的空跑抬升高度，原廠 Bambu 機型幾乎都是 0.4 mm。材料層的 filament_z_hop 不是 nil 時會蓋過它，' +
-      '所以實際生效值要看切片產物，不能只看這一層。',
-    raising: '跨過已印表面時更不容易擦撞，但每次抬降都增加時間，也可能多留拉絲點。',
-    lowering: '快，但噴頭可能刮傷頂面或碰到翹起的邊。',
+      'Machine-level travel lift height; almost every stock Bambu printer uses 0.4 mm. The filament-level filament_z_hop overrides it when it is not nil, ' +
+      'so the value actually in effect has to be read from the sliced output, not from this level alone.',
+    raising: 'Less likely to brush against printed surfaces when crossing them, but every lift and lower adds time and may leave extra stringing points.',
+    lowering: 'Fast, but the nozzle may scratch top surfaces or hit a curled-up edge.',
     related: ['z_hop_types', 'filament_z_hop', 'retract_lift_above', 'retract_lift_below'],
   },
   {
     key: 'z_hop_types',
     owner: 'machine',
     group: 'retraction',
-    label: 'Z 抬升方式（機器預設）',
+    label: 'Z hop type (machine default)',
     valueType: 'enum',
     enumValues: ['Auto Lift', 'Normal Lift', 'Slope Lift', 'Spiral Lift'],
     whatItDoes:
-      '抬升的軌跡。原廠 Bambu 機型都是 Auto Lift，由切片器判斷何時抬；實測一個碗形件的切片，' +
-      '跨越外牆的空跑全部有抬升。材料層的 filament_z_hop_types 不是 nil 時會蓋過它' +
-      '（許多原廠材料設成 Spiral Lift）。',
-    raising: 'Spiral Lift／Slope Lift 在移動中同時抬升，少一次急停，也比較不會在原地拉出細絲。',
-    lowering: 'Normal Lift 先垂直抬再走，路徑最單純，但會在原地多停一下。',
+      'Trajectory of the lift. Stock Bambu printers all use Auto Lift, letting the slicer decide when to lift; in a measured slice of a bowl-shaped part, ' +
+      'every travel move that crossed an outer wall was lifted. The filament-level filament_z_hop_types overrides it when it is not nil ' +
+      '(many stock filaments set Spiral Lift).',
+    raising: 'Spiral Lift / Slope Lift rise while moving, avoiding one abrupt stop and making it less likely to pull a fine string on the spot.',
+    lowering: 'Normal Lift rises vertically first and then travels; the simplest path, but it pauses on the spot for a moment longer.',
     related: ['z_hop', 'filament_z_hop_types', 'reduce_crossing_wall'],
   },
 
-  // ── 懸空與橋接 ────────────────────────────────────────────────────────
+  // ── Overhangs and bridges ─────────────────────────────────────────────
   {
     key: 'enable_overhang_speed',
     owner: 'process',
     group: 'quality',
-    label: '懸空自動減速',
+    label: 'Slow down for overhang',
     valueType: 'boolean',
-    whatItDoes: '依懸空程度分四段自動降速，讓擠出的線有時間被風扇固化。',
-    raising: '懸空面品質大幅改善。',
-    lowering: '快，但斜面下緣會捲翹起毛。',
+    whatItDoes: 'Automatically slows down in four steps according to how far the overhang extends, giving the extruded line time to be set by the fan.',
+    raising: 'Much better overhang surface quality.',
+    lowering: 'Fast, but the lower edge of sloped surfaces curls up and gets fuzzy.',
     related: ['overhang_1_4_speed', 'enable_overhang_bridge_fan', 'fan_max_speed'],
   },
   {
     key: 'bridge_flow',
     owner: 'process',
     group: 'quality',
-    label: '橋接流量',
+    label: 'Bridge flow',
     valueType: 'ratio',
     typicalRange: { min: 0.5, max: 1.2 },
-    whatItDoes: '橋接段的擠出倍率。略低於 1 可以讓橋線被拉緊而不下垂。',
-    raising: '橋線較粗實但容易下垂。',
-    lowering: '橋線繃得更直，過低會斷線。',
+    whatItDoes: 'Extrusion multiplier for bridge segments. Slightly below 1 keeps bridge lines taut so they do not droop.',
+    raising: 'Thicker, more solid bridge lines that droop more easily.',
+    lowering: 'Bridge lines pulled straighter; too low and they break.',
     related: ['bridge_speed', 'enable_overhang_bridge_fan'],
   },
   {
     key: 'bridge_speed',
     owner: 'process',
     group: 'quality',
-    label: '橋接速度',
+    label: 'Bridge speed',
     valueType: 'speed-mms',
     unit: 'mm/s',
     typicalRange: { min: 20, max: 80 },
-    whatItDoes: '跨空段的列印速度。',
-    raising: '橋線被拉得更直，但過快會拉斷。',
-    lowering: '下垂變嚴重。',
+    whatItDoes: 'Print speed across unsupported spans.',
+    raising: 'Bridge lines are pulled straighter, but too fast pulls them apart.',
+    lowering: 'Drooping gets worse.',
     related: ['bridge_flow', 'fan_max_speed'],
   },
 
-  // ── 支撐 ──────────────────────────────────────────────────────────────
+  // ── Support ───────────────────────────────────────────────────────────
   {
     key: 'enable_support',
     owner: 'process',
     group: 'support',
-    label: '啟用支撐',
+    label: 'Enable support',
     valueType: 'boolean',
-    whatItDoes: '是否產生支撐結構。',
-    raising: '陡峭懸空可印，但耗材、時間與後處理增加，接觸面會留疤。',
-    lowering: '表面乾淨，但超過臨界角的懸空會失敗。',
+    whatItDoes: 'Whether to generate support structures.',
+    raising: 'Steep overhangs become printable, but filament, time and post-processing increase, and contact surfaces are left scarred.',
+    lowering: 'Clean surfaces, but overhangs beyond the critical angle fail.',
     related: ['support_type', 'support_threshold_angle', 'support_top_z_distance'],
   },
   {
     key: 'support_type',
     owner: 'process',
     group: 'support',
-    label: '支撐類型',
+    label: 'Support type',
     valueType: 'enum',
     enumValues: ['normal(auto)', 'tree(auto)', 'normal(manual)', 'tree(manual)', 'hybrid(auto)'],
-    whatItDoes: 'normal 是柱狀網格，tree 是樹狀分支。',
-    raising: 'tree 省料好拆、對有機造型友善；normal 對大片平坦懸空較穩。',
-    lowering: 'tree 對大面積水平懸空支撐力不足。',
+    whatItDoes: 'normal is a columnar grid; tree is branching.',
+    raising: 'tree uses less filament, removes easily and suits organic shapes; normal is steadier under large flat overhangs.',
+    lowering: 'tree does not support large horizontal overhangs well enough.',
     related: ['enable_support', 'tree_support_branch_angle'],
   },
   {
     key: 'support_threshold_angle',
     owner: 'process',
     group: 'support',
-    label: '支撐臨界角',
+    label: 'Support threshold angle',
     valueType: 'angle-deg',
     unit: '°',
     typicalRange: { min: 20, max: 60 },
-    whatItDoes: '超過這個角度（相對垂直）的懸空才加支撐。FDM 一般 45° 以內可自撐。',
-    raising: '支撐變少、表面乾淨，但陡峭面可能垮掉。',
-    lowering: '支撐變多、成功率高，但耗材與後處理增加。',
+    whatItDoes: 'Only overhangs beyond this angle (measured from vertical) get support. FDM can generally support itself up to 45°.',
+    raising: 'Less support and cleaner surfaces, but steep faces may collapse.',
+    lowering: 'More support and a higher success rate, but more filament and post-processing.',
     related: ['enable_support', 'support_type'],
   },
   {
     key: 'support_top_z_distance',
     owner: 'process',
     group: 'support',
-    label: '支撐頂部間隙',
+    label: 'Support top Z distance',
     valueType: 'length-mm',
     unit: 'mm',
     typicalRange: { min: 0, max: 0.4 },
-    whatItDoes: '支撐與模型之間的垂直留隙，直接決定好不好拆與表面留疤程度。',
-    raising: '容易拆除，但懸空面下垂變明顯。',
-    lowering: '支撐面更平整，但可能與模型熔在一起拆不下來。',
+    whatItDoes: 'Vertical gap between support and model; directly determines how easily supports come off and how much they scar the surface.',
+    raising: 'Easy to remove, but the overhang surface droops more visibly.',
+    lowering: 'A flatter supported surface, but supports may fuse with the model and refuse to come off.',
     related: ['enable_support', 'support_base_pattern'],
   },
 
-  // ── 精度 ──────────────────────────────────────────────────────────────
+  // ── Accuracy ──────────────────────────────────────────────────────────
   {
     key: 'xy_hole_compensation',
     owner: 'process',
     group: 'accuracy',
-    label: '孔洞 XY 補償',
+    label: 'X-Y hole compensation',
     valueType: 'length-mm',
     unit: 'mm',
     typicalRange: { min: -0.2, max: 0.3 },
-    whatItDoes: '補償孔洞因擠出線內縮而印小的現象。正值把孔擴大。',
-    raising: '孔變大，銷子與螺絲更好裝。',
-    lowering: '孔變小。',
+    whatItDoes: 'Compensates for holes printing undersized because extrusion lines pull inward. Positive values enlarge holes.',
+    raising: 'Larger holes; pins and screws go in more easily.',
+    lowering: 'Smaller holes.',
     related: ['xy_contour_compensation', 'elefant_foot_compensation'],
   },
   {
     key: 'xy_contour_compensation',
     owner: 'process',
     group: 'accuracy',
-    label: '外輪廓 XY 補償',
+    label: 'X-Y contour compensation',
     valueType: 'length-mm',
     unit: 'mm',
     typicalRange: { min: -0.3, max: 0.2 },
-    whatItDoes: '整體外輪廓的尺寸補償。負值縮小外形。',
-    raising: '外形變大。',
-    lowering: '外形變小，配合件更好插入。',
+    whatItDoes: 'Dimensional compensation for the whole outer contour. Negative values shrink the outline.',
+    raising: 'Larger outline.',
+    lowering: 'Smaller outline; mating parts insert more easily.',
     related: ['xy_hole_compensation', 'elefant_foot_compensation'],
   },
   {
     key: 'detect_thin_wall',
     owner: 'process',
     group: 'accuracy',
-    label: '薄壁偵測',
+    label: 'Detect thin wall',
     valueType: 'boolean',
     whatItDoes:
-      '偵測窄於一條擠出線寬的區域，並嘗試用可變線寬把它補出來。Bambu 原廠預設是關的（0）。',
+      'Detects regions narrower than one extrusion line width and tries to fill them with variable line width. Off (0) by default in Bambu\'s stock presets.',
     raising:
-      '開啟後模型上真正的薄片、刀刃邊緣不會缺料。代價是切片器會去填「它以為是薄壁」的窄縫 —— ' +
-      '列印即組裝機構刻意留的間隙就是這種窄縫，一開就被填掉、零件焊死。',
-    lowering: '關閉後窄於線寬的特徵直接略過不印，該留空的間隙會被留下來。',
+      'When on, genuinely thin fins and blade edges on the model are not left out. The cost is that the slicer fills narrow slots it takes for thin walls — ' +
+      'the clearances a print-in-place mechanism deliberately leaves are exactly such slots; turn it on and they get filled, fusing the parts together.',
+    lowering: 'When off, features narrower than a line width are skipped, so the clearances that should stay empty are kept.',
     related: ['xy_contour_compensation', 'xy_hole_compensation', 'outer_wall_line_width'],
   },
   {
     key: 'precise_outer_wall',
     owner: 'process',
     group: 'accuracy',
-    label: '精準外牆',
+    label: 'Precise wall',
     valueType: 'boolean',
     whatItDoes:
-      '調整外牆與內牆之間的間距，讓成品外形尺寸更接近模型標稱值，代價是牆之間可能出現細縫。',
-    raising: '外形尺寸更準，配合件更好對。',
-    lowering: '外形略大於標稱值，但牆與牆之間結合得更緊實。',
+      'Adjusts the spacing between the outer wall and the inner walls so the printed outline comes closer to the model\'s nominal dimensions, at the cost of possible fine gaps between walls.',
+    raising: 'More accurate outer dimensions; mating parts line up better.',
+    lowering: 'The outline is slightly larger than nominal, but the walls bond more tightly to each other.',
     related: ['xy_contour_compensation', 'outer_wall_line_width', 'wall_loops'],
   },
   {
     key: 'enable_prime_tower',
     owner: 'process',
     group: 'quality',
-    label: '擦拭塔',
+    label: 'Prime tower',
     valueType: 'boolean',
     whatItDoes:
-      '多色／多材料列印時，在板面上另外印一座塔，每次換料先在塔上把舊料擠乾淨再回到模型。',
+      'For multi-colour / multi-material prints, prints a separate tower on the plate; at each filament change the old filament is purged on the tower before returning to the model.',
     raising:
-      '換色乾淨，模型上不會出現前一個顏色的殘留，也不會有溢料掉進模型的縫隙裡。',
+      'Clean colour changes: no traces of the previous colour on the model, and no oozed filament dropping into the model\'s gaps.',
     lowering:
-      '省時間與耗材，但殘料會吐在模型上。對列印即組裝的機構特別致命 —— ' +
-      '一滴溢料掉進 0.1 mm 的齒縫就等於把它焊死。',
+      'Saves time and filament, but purged material ends up on the model. Particularly fatal for print-in-place mechanisms — ' +
+      'one drop of ooze falling into a 0.1 mm gear gap is enough to fuse it solid.',
     related: ['prime_tower_width', 'flush_into_objects', 'flush_into_infill'],
   },
   {
     key: 'flush_into_objects',
     owner: 'process',
     group: 'quality',
-    label: '沖刷進物件',
+    label: 'Flush into this object',
     valueType: 'boolean',
     whatItDoes:
-      '把換色要沖掉的舊料擠進模型本體，取代擦拭塔。省料，但那些料會留在成品裡面。',
-    raising: '耗材與時間下降。',
+      'Extrudes the old filament that a colour change has to flush into the model itself instead of the prime tower. Saves filament, but that material stays inside the finished part.',
+    raising: 'Less filament and time.',
     lowering:
-      '換色殘料不會進到模型內部，顏色界線乾淨。需要配合擦拭塔，否則料無處可去。',
+      'Colour-change leftovers stay out of the model\'s interior and colour boundaries stay clean. Needs the prime tower, otherwise the filament has nowhere to go.',
     related: ['enable_prime_tower', 'flush_into_infill'],
   },
   {
     key: 'flush_into_infill',
     owner: 'process',
     group: 'quality',
-    label: '沖刷進填充',
+    label: 'Flush into objects\' infill',
     valueType: 'boolean',
-    whatItDoes: '把換色要沖掉的舊料擠進稀疏填充區域。比 flush_into_objects 溫和，只影響看不到的內部。',
-    raising: '省下擦拭塔的耗材；填充區顏色會混雜，但外觀看不出來。',
-    lowering: '填充保持單一材料，適合需要確定材料性質的結構件。',
+    whatItDoes: 'Extrudes the old filament that a colour change has to flush into the sparse infill. Gentler than flush_into_objects, affecting only the hidden interior.',
+    raising: 'Saves prime tower filament; the infill colours get mixed, but this is not visible from outside.',
+    lowering: 'The infill stays a single material, which suits structural parts whose material properties must be certain.',
     related: ['enable_prime_tower', 'flush_into_objects', 'sparse_infill_density'],
   },
   {
     key: 'precise_z_height',
     owner: 'process',
     group: 'accuracy',
-    label: '精確 Z 高度',
+    label: 'Precise Z height',
     valueType: 'boolean',
-    whatItDoes: '微調最後幾層的層高，讓成品總高精確等於模型高度。',
-    raising: '總高精準，適合有配合關係的零件。',
-    lowering: '總高會被層高整除誤差影響。',
+    whatItDoes: 'Fine-tunes the height of the last few layers so the total height of the print matches the model height exactly.',
+    raising: 'Accurate total height, suited to parts with mating relationships.',
+    lowering: 'Total height is affected by the rounding error of dividing by the layer height.',
     related: ['layer_height'],
   },
   {
     key: 'seam_position',
     owner: 'process',
     group: 'surface',
-    label: '接縫位置',
+    label: 'Seam position',
     valueType: 'enum',
     enumValues: ['nearest', 'aligned', 'back', 'random'],
-    whatItDoes: '每層起訖點的擺放策略，決定接縫痕跡的可見度。',
-    raising: 'back 把縫藏到背面、aligned 排成一直線最不礙眼。',
-    lowering: 'random 把縫打散成雜點，圓柱體上反而更明顯。',
+    whatItDoes: 'Strategy for placing the start/end point of each layer, which determines how visible the seam is.',
+    raising: 'back hides the seam on the rear; aligned lines it up in a straight line, the least obtrusive.',
+    lowering: 'random scatters the seam into specks, which is actually more noticeable on cylinders.',
     related: ['has_scarf_joint_seam', 'wall_loops'],
   },
   {
     key: 'has_scarf_joint_seam',
     owner: 'process',
     group: 'surface',
-    label: '斜接縫',
+    label: 'Scarf joint seam',
     valueType: 'boolean',
-    whatItDoes: '把接縫做成斜向漸變而不是垂直對接，大幅降低縫痕。',
-    raising: '接縫幾乎看不見，稍微增加時間。',
-    lowering: '接縫是傳統的一條垂直線。',
+    whatItDoes: 'Makes the seam a sloped, gradual transition instead of a vertical butt joint, greatly reducing seam marks.',
+    raising: 'The seam is almost invisible; slightly more time.',
+    lowering: 'The seam is the traditional single vertical line.',
     related: ['seam_position'],
   },
 
-  // ── 速度 ──────────────────────────────────────────────────────────────
+  // ── Speed ─────────────────────────────────────────────────────────────
   {
     key: 'outer_wall_speed',
     owner: 'process',
     group: 'speed',
-    label: '外牆速度',
+    label: 'Outer wall speed',
     valueType: 'speed-mms',
     unit: 'mm/s',
     typicalRange: { min: 30, max: 300 },
-    whatItDoes: '外側可見牆面的速度，是表面品質最敏感的速度參數。',
-    raising: '省時，但振紋、尺寸偏差與轉角瑕疵變明顯。',
-    lowering: '表面明顯變好，總時間增加有限（外牆只佔一小部分路徑）。',
+    whatItDoes: 'Speed of the visible outer wall; the speed parameter surface quality is most sensitive to.',
+    raising: 'Saves time, but ringing, dimensional deviation and corner defects become more visible.',
+    lowering: 'Clearly better surfaces with a limited increase in total time (the outer wall is only a small part of the toolpath).',
     related: ['inner_wall_speed', 'outer_wall_acceleration', 'default_acceleration'],
   },
   {
     key: 'reduce_crossing_wall',
     owner: 'process',
     group: 'speed',
-    label: '避免跨越已印牆面',
+    label: 'Avoid crossing wall',
     valueType: 'boolean',
     whatItDoes:
-      '空跑距離超過門檻時繞路，避免跨過已印牆面在表面留下料瘤（官方說明的用途）。' +
-      '繞路超過 max_travel_detour_distance 時仍會直接跨牆。',
+      'Detours when a travel move exceeds a threshold, so it does not cross printed walls and leave blobs on the surface (the purpose the official documentation gives). ' +
+      'If the detour would exceed max_travel_detour_distance, it still crosses the wall directly.',
     raising:
-      '表面料瘤與刮痕較少，但空跑路徑變長。它不是防撞設定：Bambu 原廠的 Auto Lift 跨越外牆時' +
-      '本來就會抬升，實測一個碗形件開啟後，未抬升的跨外牆空跑反而從 0 次變 10 次。',
-    lowering: '路徑較短；跨牆時靠 Z 抬升避開表面。',
+      'Fewer surface blobs and scratches, but longer travel paths. It is not a collision-avoidance setting: Bambu\'s stock Auto Lift already lifts when crossing outer walls, ' +
+      'and in a measured bowl-shaped part, turning it on actually raised the number of unlifted outer-wall-crossing travel moves from 0 to 10.',
+    lowering: 'Shorter paths; when crossing walls, Z hop keeps the nozzle off the surface.',
     related: ['max_travel_detour_distance', 'z_hop_types', 'filament_z_hop'],
   },
   {
     key: 'print_sequence',
     owner: 'process',
     group: 'quality',
-    label: '列印順序',
+    label: 'Print sequence',
     valueType: 'enum',
     enumValues: ['by layer', 'by object'],
     whatItDoes:
-      '整盤一層一層印（by layer），或一個物件印完再印下一個（by object）。逐件印時，' +
-      '先印好的件不能高過噴頭到橫桿的淨空，物件之間也要拉開距離，切片器會擋。',
+      'Prints the whole plate layer by layer (by layer), or finishes one object before starting the next (by object). When printing by object, ' +
+      'already-printed parts must not be taller than the clearance between nozzle and gantry rod, and objects must be spaced apart; the slicer enforces this.',
     raising:
-      'by object：物件之間不必每層來回空跑，一件倒了不會拖垮已經印完的件；但受高度淨空限制、排版較鬆。',
-    lowering: 'by layer：沒有高度限制、排版密，但每層都要在所有物件間移動，一件倒了常會拖累整盤。',
+      'by object: no travel back and forth between objects on every layer, and one part failing does not ruin parts already finished; but limited by height clearance, with looser arrangement.',
+    lowering: 'by layer: no height limit and dense arrangement, but every layer travels between all objects, and one failed part often drags down the whole plate.',
     related: ['extruder_clearance_height_to_rod', 'extruder_clearance_max_radius'],
   },
   {
     key: 'sparse_infill_speed',
     owner: 'process',
     group: 'speed',
-    label: '填充速度',
+    label: 'Sparse infill speed',
     valueType: 'speed-mms',
     unit: 'mm/s',
     typicalRange: { min: 50, max: 500 },
-    whatItDoes: '內部填充速度，通常是總時間的主要來源，且不影響外觀。',
-    raising: '省時效果最大，但受限於 filament_max_volumetric_speed，超過就會欠擠出。',
-    lowering: '填充更紮實。',
+    whatItDoes: 'Speed of the interior infill; usually the main contributor to total time, and it does not affect appearance.',
+    raising: 'The biggest time saving, but capped by filament_max_volumetric_speed; beyond it you get under-extrusion.',
+    lowering: 'Denser, more solid infill.',
     related: ['filament_max_volumetric_speed', 'sparse_infill_density'],
   },
   {
     key: 'default_acceleration',
     owner: 'process',
     group: 'speed',
-    label: '預設加速度',
+    label: 'Default acceleration',
     valueType: 'count',
     unit: 'mm/s²',
     typicalRange: { min: 500, max: 20000 },
-    whatItDoes: '整體加速度上限，決定小特徵能不能真的達到設定速度。',
-    raising: '實際列印時間下降，但振紋（ringing）與噪音增加。',
-    lowering: '表面更乾淨，時間拉長。',
+    whatItDoes: 'Overall acceleration limit; determines whether small features can actually reach the set speed.',
+    raising: 'Shorter actual print time, but more ringing and noise.',
+    lowering: 'Cleaner surfaces, longer time.',
     related: ['outer_wall_acceleration', 'initial_layer_acceleration'],
   },
   {
     key: 'filament_max_volumetric_speed',
     owner: 'filament',
     group: 'speed',
-    label: '最大體積流量',
+    label: 'Max volumetric speed',
     valueType: 'count',
     unit: 'mm³/s',
     typicalRange: { min: 2, max: 32 },
-    whatItDoes: '這捲料每秒最多能熔多少，是所有速度設定真正的天花板。',
-    raising: '可以印更快，但超過熱端能力就會欠擠出、線變細甚至斷料。',
-    lowering: '擠出穩定，但所有速度設定都會被壓下來。',
+    whatItDoes: 'The most of this filament that can be melted per second; the real ceiling for every speed setting.',
+    raising: 'Allows faster printing, but beyond what the hotend can handle you get under-extrusion, thin lines or even filament breaks.',
+    lowering: 'Stable extrusion, but every speed setting gets held down.',
     related: ['sparse_infill_speed', 'nozzle_temperature'],
   },
 
-  // ── 表面 ──────────────────────────────────────────────────────────────
+  // ── Surface ───────────────────────────────────────────────────────────
   {
     key: 'ironing_type',
     owner: 'process',
     group: 'surface',
-    label: '熨燙',
+    label: 'Ironing type',
     valueType: 'enum',
     enumValues: ['no ironing', 'top', 'topmost', 'solid'],
-    whatItDoes: '列印完頂面後再用噴頭低流量掃過一次抹平。',
-    raising: '頂面接近光滑，但每個頂面都要多花不少時間。',
-    lowering: '頂面看得到走線紋路。',
+    whatItDoes: 'After printing a top surface, passes the nozzle over it once more at low flow to smooth it.',
+    raising: 'Near-smooth top surfaces, but every top surface takes considerably longer.',
+    lowering: 'Toolpath lines are visible on the top surface.',
     related: ['ironing_flow', 'ironing_spacing', 'top_surface_pattern'],
   },
   {
     key: 'top_surface_pattern',
     owner: 'process',
     group: 'surface',
-    label: '頂面圖樣',
+    label: 'Top surface pattern',
     valueType: 'enum',
     enumValues: ['concentric', 'zig-zag', 'monotonic', 'monotonicline', 'alignedrectilinear', 'hilbertcurve', 'archimedeanchords'],
-    whatItDoes: '頂面實心層的走線方式。',
-    raising: 'monotonicline 讓相鄰線條維持一致方向與順序，反光一致、觀感最乾淨。',
-    lowering: 'zig-zag 來回走會造成明暗交錯的紋路。',
+    whatItDoes: 'How the solid top layers are laid down.',
+    raising: 'monotonicline keeps adjacent lines in a consistent direction and order, giving uniform reflections and the cleanest look.',
+    lowering: 'zig-zag goes back and forth, producing alternating light and dark bands.',
     related: ['ironing_type', 'top_shell_layers'],
   },
   {
     key: 'fuzzy_skin',
     owner: 'process',
     group: 'surface',
-    label: '絨面',
+    label: 'Fuzzy skin',
     valueType: 'enum',
     enumValues: ['none', 'external', 'all', 'allwalls'],
-    whatItDoes: '在外牆加入隨機抖動做出磨砂質感，也能掩蓋層紋與接縫。',
-    raising: '質感明顯、握感好，但尺寸精度下降。',
-    lowering: '表面平滑但層紋可見。',
+    whatItDoes: 'Adds random jitter to the outer wall for a matte texture, which also hides layer lines and seams.',
+    raising: 'Pronounced texture and good grip, but lower dimensional accuracy.',
+    lowering: 'Smooth surface, but layer lines are visible.',
     related: ['seam_position'],
   },
 ];
@@ -774,17 +775,19 @@ export function knownParameterKeys(): readonly string[] {
 }
 
 /**
- * 判斷一個 key 該寫進哪一種 preset 檔。
- * catalog 沒收錄的 key 回傳 undefined —— 呼叫端必須靠展平後的實際 preset 內容判定，
- * 不可以亂猜，否則會把 filament 的 key 寫進 process 檔而被 CLI 靜默忽略。
+ * Decides which kind of preset file a key belongs in.
+ * Keys not in the catalog return undefined — the caller must decide from the actual flattened
+ * preset contents and must not guess; otherwise a filament key ends up in a process file and is
+ * silently ignored by the CLI.
  */
 export function ownerOf(key: string): PresetKind | undefined {
   return BY_KEY.get(key)?.owner;
 }
 
 /**
- * 對照數值是否落在建議區間。超出不代表非法（使用者可能真的要做極端測試），
- * 但要明確回報，不能默默吞掉。
+ * Checks whether a value falls within the recommended range. Being outside it is not illegal
+ * (the user may really want an extreme test), but it must be reported explicitly, never
+ * silently swallowed.
  */
 export function rangeWarning(key: string, value: string): string | undefined {
   const spec = BY_KEY.get(key);
@@ -793,10 +796,10 @@ export function rangeWarning(key: string, value: string): string | undefined {
   if (!Number.isFinite(numeric)) return undefined;
   const { min, max } = spec.typicalRange;
   if (numeric < min) {
-    return `${key}=${value} 低於建議下限 ${min}${spec.unit ?? ''}：${spec.lowering}`;
+    return `${key}=${value} is below the recommended minimum ${min}${spec.unit ?? ''}: ${spec.lowering}`;
   }
   if (numeric > max) {
-    return `${key}=${value} 高於建議上限 ${max}${spec.unit ?? ''}：${spec.raising}`;
+    return `${key}=${value} is above the recommended maximum ${max}${spec.unit ?? ''}: ${spec.raising}`;
   }
   return undefined;
 }

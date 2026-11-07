@@ -14,7 +14,7 @@ It does **not** control printers. No MQTT, no uploads, no starting prints.
 - **User presets that show up in the GUI.** Writes to the user profile folder only; system presets are never touched.
 
 > Unofficial. Not affiliated with, endorsed or sponsored by Bambu Lab.
-> Tool descriptions and messages are currently in Traditional Chinese. MCP clients' models read them fine; an English tool surface is planned.
+> Tool descriptions and messages are in English. `bambu_diagnose` and `bambu_plan_settings` also match symptoms and goals written in Chinese (e.g. 翹邊, 省時).
 
 ## Contents
 
@@ -195,6 +195,17 @@ src/
 ```
 
 The ZIP reader and writer, STL and OBJ parsers and 3MF builder are hand-written; the only runtime dependencies are the MCP SDK and zod.
+
+### Updating the key baseline
+
+`src/domain/parameters/known-keys.ts` is generated: the 568 setting keys of a flattened Bambu Studio configuration, used to catch typos in overrides (Bambu Studio silently ignores unknown keys). Regenerate it when a Bambu Studio release adds parameters:
+
+```bash
+node scripts/verify-real-slicer.mjs   # writes a .gcode.3mf
+# take the key list from Metadata/project_settings.config in that file and overwrite known-keys.ts
+```
+
+It is not every key of every printer: multi-nozzle and other models may have extra keys, so an unknown key is reported as a warning, not an error.
 
 ## License and trademarks
 

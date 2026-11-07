@@ -6,7 +6,7 @@ import {
   parseGcodeStats,
 } from '../../src/domain/slicing/gcode-stats.js';
 
-/** 取自本機 BambuStudio 02.07.01.62 實際輸出的標頭。 */
+/** Header taken from the actual output of a local BambuStudio 02.07.01.62. */
 const REAL_HEADER = [
   '; HEADER_BLOCK_START',
   '; BambuStudio 02.07.01.62',
@@ -22,7 +22,7 @@ const REAL_HEADER = [
 ].join('\n');
 
 describe('parseGcodeStats', () => {
-  it('解析真實標頭', () => {
+  it('parses a real header', () => {
     const stats = parseGcodeStats(REAL_HEADER);
     expect(stats).toBeDefined();
     expect(stats?.layerCount).toBe(100);
@@ -32,31 +32,31 @@ describe('parseGcodeStats', () => {
     expect(stats?.filamentLengthMm).toBe(1236.35);
   });
 
-  it('把同一行的兩個時間分開，不會加在一起', () => {
+  it('splits the two durations on one line instead of adding them together', () => {
     const stats = parseGcodeStats(REAL_HEADER);
-    // 8m45s = 525s，9m5s = 545s。若沒有先以分號切開會得到 1070s。
+    // 8m45s = 525s, 9m5s = 545s. Without splitting on the semicolon first you would get 1070s.
     expect(stats?.modelPrintTimeSeconds).toBe(525);
     expect(stats?.totalEstimatedTimeSeconds).toBe(545);
   });
 
-  it('欄位名稱含方括號時仍能正確切出 key', () => {
+  it('extracts the key correctly when the field name contains brackets', () => {
     const stats = parseGcodeStats(REAL_HEADER);
-    // `total filament length [mm] :` 的分隔符是最後那個冒號，不是方括號。
+    // The separator in `total filament length [mm] :` is the final colon, not the bracket.
     expect(stats?.filamentLengthMm).toBe(1236.35);
   });
 
-  it('缺少必要欄位時回傳 undefined，而不是編造預設值', () => {
-    expect(parseGcodeStats('; 只有一行註解')).toBeUndefined();
+  it('returns undefined when required fields are missing, rather than inventing defaults', () => {
+    expect(parseGcodeStats('; just a single comment line')).toBeUndefined();
     expect(parseGcodeStats('; total layer number: 100')).toBeUndefined();
   });
 
-  it('單色不回傳逐色明細', () => {
+  it('returns no per-colour breakdown for a single colour', () => {
     expect(parseGcodeStats(REAL_HEADER)?.filamentBreakdown).toBeUndefined();
   });
 
-  it('多色列印把各色用量加總，並逐色對應到耗材槽', () => {
-    // 取自一盤四色列印的真實標頭（碗＋三個鑰匙圈，用了第 2–5 槽）。
-    // 只取第一個值會把整盤 43.68 g 報成 4.66 g。
+  it('sums per-colour usage for multi-colour prints and maps each colour to its filament slot', () => {
+    // Taken from the real header of a four-colour plate (a bowl plus three keychains, using slots 2-5).
+    // Taking only the first value would report the plate's 43.68 g as 4.66 g.
     const stats = parseGcodeStats(MULTI_COLOUR_HEADER);
     expect(stats?.filamentGrams).toBe(43.68);
     expect(stats?.filamentLengthMm).toBe(14645.86);
@@ -68,7 +68,7 @@ describe('parseGcodeStats', () => {
     ]);
   });
 
-  it('槽位數量與用量對不上時不硬配槽位', () => {
+  it('does not force slot numbers when their count does not match the usage values', () => {
     const stats = parseGcodeStats(
       [
         '; total layer number: 50',
@@ -102,19 +102,19 @@ const MULTI_COLOUR_HEADER = [
 ].join('\n');
 
 describe('parseDurationSeconds', () => {
-  it('解析時分秒組合', () => {
+  it('parses combinations of hours, minutes and seconds', () => {
     expect(parseDurationSeconds('1h 2m 3s')).toBe(3723);
     expect(parseDurationSeconds('8m 45s')).toBe(525);
     expect(parseDurationSeconds('45s')).toBe(45);
   });
 
-  it('沒有時間單位時回傳 undefined', () => {
-    expect(parseDurationSeconds('未知')).toBeUndefined();
+  it('returns undefined when there is no time unit', () => {
+    expect(parseDurationSeconds('unknown')).toBeUndefined();
   });
 });
 
 describe('formatDuration', () => {
-  it('依量級選擇單位', () => {
+  it('picks units by magnitude', () => {
     expect(formatDuration(3723)).toBe('1h 2m');
     expect(formatDuration(525)).toBe('8m 45s');
     expect(formatDuration(45)).toBe('45s');

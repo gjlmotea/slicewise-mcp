@@ -22,17 +22,20 @@ import type { PresetStore } from '../ports/preset-store.js';
 import type { Slicer } from '../ports/slicer.js';
 
 /**
- * BambuStudio 命令列 adapter。
+ * BambuStudio command-line adapter.
  *
- * 這裡最重要的一件事是：**永遠不把原始 preset 路徑交給 CLI**。
+ * The single most important rule here: **never hand a raw preset path to the CLI**.
  *
- * BambuStudio CLI 載入 `--load-settings` 指定的 JSON 時不解析 `inherits`，
- * 只有葉節點自己宣告的 key 生效，其餘掉回執行檔內建預設值。實測 20 mm 方塊，
- * X1C ／ 0.20mm Standard ／ PLA Basic：直接載入葉節點得到 10m 11s、填充 20%，
- * 展平後得到 8m 45s、填充 15%（原廠 preset 的真值）。這就是 BambuStudio#1704。
+ * When BambuStudio CLI loads the JSON given to `--load-settings` it does not resolve
+ * `inherits`: only the keys the leaf preset declares itself take effect, and everything
+ * else falls back to the executable's built-in defaults. Measured on a 20 mm cube with
+ * X1C / 0.20mm Standard / PLA Basic: loading the leaf presets directly gave 10m 11s and
+ * 20% infill; flattening first gave 8m 45s and 15% infill (the factory preset's real
+ * values). This is BambuStudio#1704.
  *
- * 因此每次切片都先展平三種 preset、寫成暫存 JSON 再交給 CLI，切完再從產物讀回
- * 實際生效的設定做稽核。
+ * So every slice first flattens all three presets, writes them as temporary JSON and
+ * passes those to the CLI; after slicing, the settings that actually took effect are
+ * read back from the output and audited.
  */
 
 const DEFAULT_TIMEOUT_MS = 300_000;
@@ -55,7 +58,7 @@ export function defaultExecutablePath(): string {
 export type BambuStudioCliOptions = {
   readonly executablePath?: string;
   readonly timeoutMs?: number;
-  /** 產物輸出目錄。未設定時切片工具會拒絕執行，不會亂寫使用者的檔案系統。 */
+  /** Output directory for sliced files. When unset the slice tool refuses to run rather than writing somewhere arbitrary on the user's file system. */
   readonly outputDir?: string;
 };
 
@@ -79,7 +82,7 @@ export class BambuStudioCli implements Slicer {
   async version(): Promise<string | undefined> {
     if (!this.available()) return undefined;
     const result = await this.#run(['--help'], 20_000);
-    // 版本印在 help 的第一行：`BambuStudio-02.07.01.62:`
+    // The version is printed on the first line of the help output: `BambuStudio-02.07.01.62:`
     const match = /BambuStudio-([\d.]+)/.exec(`${result.stdout}\n${result.stderr}`);
     return match?.[1];
   }
@@ -88,19 +91,19 @@ export class BambuStudioCli implements Slicer {
     if (!this.available()) {
       return {
         ok: false,
-        reason: `找不到 BambuStudio 執行檔：${this.executablePath}。請設定 BAMBU_STUDIO_PATH。`,
+        reason: `BambuStudio executable not found: ${this.executablePath}. Set BAMBU_STUDIO_PATH.`,
         stderrTail: [],
       };
     }
     if (this.outputDir === undefined) {
       return {
         ok: false,
-        reason: '未設定 BAMBU_OUTPUT_DIR；切片工具不會寫入未經授權的目錄。',
+        reason: 'BAMBU_OUTPUT_DIR is not set; the slice tool will not write to a directory it has not been given.',
         stderrTail: [],
       };
     }
     if (!existsSync(request.modelPath)) {
-      return { ok: false, reason: `找不到模型檔：${request.modelPath}`, stderrTail: [] };
+      return { ok: false, reason: `Model file not found: ${request.modelPath}`, stderrTail: [] };
     }
 
     const workDir = mkdtempSync(join(tmpdir(), 'bambu-mcp-slice-'));
@@ -118,8 +121,8 @@ export class BambuStudioCli implements Slicer {
       });
       if (colourArgs.length > 0) {
         warnings.push(
-          `已把專案的 ${projectColours?.length ?? 0} 格耗材顏色交給 CLI：載入的耗材設定同名時，` +
-            'CLI 會把它們當成同一卷料而關掉擦料塔，GUI 則看顏色分辨。',
+          `Passed the project's ${projectColours?.length ?? 0} filament slot colours to the CLI: when the loaded filament presets share a name, ` +
+            'the CLI treats them as the same spool and turns off the prime tower, whereas the GUI tells them apart by colour.',
         );
       }
 
@@ -132,11 +135,12 @@ export class BambuStudioCli implements Slicer {
       const outputName = `${basename(request.modelPath).replace(/\.[^.]+$/, '')}.gcode.3mf`;
       const expectedOutput = join(this.outputDir, outputName);
 
-      // 先刪掉同名舊產物。
+      // Delete any previous output with the same name first.
       //
-      // 不刪的話會有一個很惡劣的失敗模式：這次切片失敗了，但上一次的檔案還在，
-      // `existsSync` 為真，於是我們把上一次的統計當成這次的結果回報 —— 工具會說謊，
-      // 而且謊得很有說服力（數字全都合理，只是屬於別次執行）。
+      // Otherwise there is a nasty failure mode: this slice fails, but the file from the
+      // previous run is still there, `existsSync` is true, and we report the previous
+      // run's stats as this run's result. The tool would lie, and convincingly (every
+      // number looks plausible, it just belongs to a different run).
       if (existsSync(expectedOutput)) {
         rmSync(expectedOutput, { force: true });
       }
@@ -165,8 +169,8 @@ export class BambuStudioCli implements Slicer {
           ok: false,
           reason:
             run.timedOut === true
-              ? `切片逾時（${this.#timeoutMs / 1000}s）`
-              : '切片沒有產生輸出檔；詳見 stderr。',
+              ? `Slicing timed out (${this.#timeoutMs / 1000}s)`
+              : 'Slicing produced no output file; see stderr.',
           stderrTail: tail(run.stderr, 20),
         };
       }
@@ -175,7 +179,7 @@ export class BambuStudioCli implements Slicer {
       if (readBack === undefined) {
         return {
           ok: false,
-          reason: `產物 ${outputName} 無法解析；可能不是完整的 3MF。`,
+          reason: `Could not parse output ${outputName}; it may not be a complete 3MF.`,
           stderrTail: tail(run.stderr, 20),
         };
       }
@@ -184,8 +188,8 @@ export class BambuStudioCli implements Slicer {
       for (const entry of overrideAudit) {
         if (!entry.honoured) {
           warnings.push(
-            `覆寫未生效：${entry.key} 要求 ${JSON.stringify(entry.requested)}，` +
-              `產物實際為 ${JSON.stringify(entry.applied)}。` +
+            `Override not honoured: ${entry.key} requested ${JSON.stringify(entry.requested)}, ` +
+              `output actually has ${JSON.stringify(entry.applied)}. ` +
               unhonouredReason(entry.key),
           );
         }
@@ -194,7 +198,7 @@ export class BambuStudioCli implements Slicer {
       if (readBack.stats === undefined) {
         return {
           ok: false,
-          reason: '產物中找不到 G-code 統計標頭；切片可能中途失敗。',
+          reason: 'No G-code stats header found in the output; slicing may have failed partway.',
           stderrTail: tail(run.stderr, 20),
         };
       }
@@ -208,12 +212,12 @@ export class BambuStudioCli implements Slicer {
         warnings,
       };
     } finally {
-      // ART-001：過程資產不留在磁碟上。
+      // ART-001: intermediate artefacts are not left on disk.
       rmSync(workDir, { recursive: true, force: true });
     }
   }
 
-  /** 展平三種 preset，交給純函式決定覆寫的落點。 */
+  /** Flatten all three presets and let a pure function decide where each override lands. */
   #routeOverrides(request: SliceRequest): OverrideRouting {
     return routeOverrides(request.overrides, {
       machine: this.#presets.resolve(request.machinePreset, 'machine').settings,
@@ -243,7 +247,7 @@ export class BambuStudioCli implements Slicer {
     return new Promise<RunResult>((resolve) => {
       const child = spawn(this.executablePath, [...argv], {
         stdio: ['ignore', 'pipe', 'pipe'],
-        // BambuStudio 在無 GUI session 下仍需要 HOME 才能定位資料目錄。
+        // Even without a GUI session, BambuStudio still needs HOME to locate its data directory.
         env: { ...process.env },
       });
 
@@ -299,8 +303,9 @@ function placementArgs(request: SliceRequest): readonly string[] {
 }
 
 /**
- * 輸入 3MF 的專案耗材顏色（`Metadata/project_settings.config` 的 `filament_colour`）。
- * 不是 ZIP、不是 Bambu 專案、或讀不到時回傳 undefined —— 寧可不介入也不要猜。
+ * Project filament colours of the input 3MF (`filament_colour` in `Metadata/project_settings.config`).
+ * Returns undefined when the file is not a ZIP, not a Bambu project, or cannot be read: better
+ * not to intervene than to guess.
  */
 export function readProjectFilamentColours(path: string): readonly string[] | undefined {
   try {
@@ -323,14 +328,15 @@ export function readProjectFilamentColours(path: string): readonly string[] | un
 function unhonouredReason(key: string): string {
   if (key === 'enable_prime_tower') {
     return (
-      'CLI 在載入的耗材設定同名、又沒有不同顏色可分辨時，會把它們當成同一卷料而強制關掉擦料塔。' +
-      '多色專案請確認 3MF 內存有各格顏色，或改給不同的耗材 preset。'
+      'When the loaded filament presets share a name and there are no distinct colours to tell them apart, ' +
+      'the CLI treats them as the same spool and forces the prime tower off. ' +
+      'For multi-colour projects, make sure the 3MF stores a colour for each slot, or pass different filament presets.'
     );
   }
-  return '這個 key 可能不屬於任何已載入的 preset，或被 CLI 忽略。';
+  return 'This key may not belong to any loaded preset, or the CLI ignored it.';
 }
 
-/** 從產物 3MF 讀回實際生效的設定與 G-code 統計。 */
+/** Read back the settings that actually took effect and the G-code stats from the output 3MF. */
 export function readSliceOutput(
   path: string,
 ): { settings: PresetRecord; stats: ReturnType<typeof parseGcodeStats> } | undefined {
@@ -359,7 +365,7 @@ export function readSliceOutput(
     return undefined;
   }
 
-  // 盤號未知時取第一個 plate 的 G-code。
+  // When the plate number is unknown, take the first plate's G-code.
   const gcodeEntry = entries
     .filter((entry) => /^Metadata\/plate_\d+\.gcode$/.test(entry.name))
     .sort((a, b) => a.name.localeCompare(b.name))[0];
@@ -372,7 +378,7 @@ export function readSliceOutput(
   return { settings, stats };
 }
 
-/** 比對「我要求的」與「產物實際的」，任何落空都要浮出來。 */
+/** Compare what was requested with what the output actually has; every miss must be surfaced. */
 export function auditOverrides(
   requested: ParameterOverrides,
   applied: PresetRecord,
@@ -389,10 +395,10 @@ export function auditOverrides(
 }
 
 /**
- * 比對前正規化。
+ * Normalise before comparing.
  *
- * 產物裡的百分比寫成 `"15%"`，但使用者可能只給 `"15"`；
- * 數值可能是 `"0.28"` 對 `"0.280000"`。這些不算覆寫失敗。
+ * Percentages in the output are written as `"15%"`, but the user may give just `"15"`;
+ * numbers may be `"0.28"` versus `"0.280000"`. Neither counts as a failed override.
  */
 function normaliseForCompare(value: PresetValue | undefined): PresetValue | undefined {
   if (value === undefined) return undefined;

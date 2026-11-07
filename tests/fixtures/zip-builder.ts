@@ -1,9 +1,10 @@
 import { crc32 } from 'node:zlib';
 
 /**
- * 建立最小的 stored（未壓縮）ZIP，供 ZIP 讀取器測試使用。
+ * Builds a minimal stored (uncompressed) ZIP for ZIP reader tests.
  *
- * 刻意不用第三方壓縮工具產生 fixture：測試要能離線、跨平台、可重現地跑。
+ * Fixtures are deliberately not produced with third-party archivers: the tests must run
+ * offline, cross-platform and reproducibly.
  */
 export function buildStoredZip(files: readonly { name: string; content: string }[]): Buffer {
   const localChunks: Buffer[] = [];

@@ -7,10 +7,10 @@ function vec(point: Point): { x: number; y: number; z: number } {
 }
 
 /**
- * 產生一個軸對齊長方體，法向量全部朝外。
+ * Produces an axis-aligned box with all normals pointing outward.
  *
- * 繞序經過人工驗算：每個面的 cross(b-a, c-a) 都指向外側，
- * 所以 signedVolume 會得到正確的體積而不是 0。
+ * The winding was checked by hand: cross(b-a, c-a) of every face points outward,
+ * so signedVolume yields the correct volume rather than 0.
  */
 export function boxTriangles(
   size: Point = [20, 20, 20],
@@ -31,12 +31,12 @@ export function boxTriangles(
   ];
 
   const faces: readonly (readonly [number, number, number])[] = [
-    [0, 2, 1], [0, 3, 2], // 底面 -Z
-    [4, 5, 6], [4, 6, 7], // 頂面 +Z
-    [0, 1, 5], [0, 5, 4], // 前面 -Y
-    [1, 2, 6], [1, 6, 5], // 右面 +X
-    [2, 3, 7], [2, 7, 6], // 後面 +Y
-    [3, 0, 4], [3, 4, 7], // 左面 -X
+    [0, 2, 1], [0, 3, 2], // bottom -Z
+    [4, 5, 6], [4, 6, 7], // top +Z
+    [0, 1, 5], [0, 5, 4], // front -Y
+    [1, 2, 6], [1, 6, 5], // right +X
+    [2, 3, 7], [2, 7, 6], // back +Y
+    [3, 0, 4], [3, 4, 7], // left -X
   ];
 
   return faces.map(([a, b, c]) => ({
@@ -47,7 +47,7 @@ export function boxTriangles(
   }));
 }
 
-/** 把三角形寫成 binary STL。 */
+/** Writes triangles as a binary STL. */
 export function toBinaryStl(triangles: readonly Triangle[]): Buffer {
   const buffer = Buffer.alloc(84 + triangles.length * 50);
   buffer.write('bambu-mcp test fixture', 0, 'ascii');
@@ -71,7 +71,7 @@ export function toBinaryStl(triangles: readonly Triangle[]): Buffer {
   return buffer;
 }
 
-/** 把三角形寫成 ASCII STL。 */
+/** Writes triangles as an ASCII STL. */
 export function toAsciiStl(triangles: readonly Triangle[]): Buffer {
   const lines = ['solid fixture'];
   for (const triangle of triangles) {
@@ -86,12 +86,12 @@ export function toAsciiStl(triangles: readonly Triangle[]): Buffer {
 }
 
 /**
- * 一個 T 形懸臂：上方橫樑往兩側伸出，底下懸空。
- * 用來驗證懸空偵測會抓到不貼床的朝下面。
+ * A T-shaped cantilever: the top beam sticks out on both sides with nothing underneath.
+ * Used to verify that overhang detection catches downward-facing faces that are not on the bed.
  */
 export function overhangingTriangles(): readonly Triangle[] {
   return [
-    ...boxTriangles([4, 4, 10], [8, 8, 0]), // 直立柱
-    ...boxTriangles([20, 4, 4], [0, 8, 10]), // 橫樑
+    ...boxTriangles([4, 4, 10], [8, 8, 0]), // upright post
+    ...boxTriangles([20, 4, 4], [0, 8, 10]), // cross beam
   ];
 }

@@ -5,32 +5,37 @@ import type { MeshPart } from './threemf-reader.js';
 import { boxDistance, dot, subtract } from './triangle-set.js';
 
 /**
- * 浮空實體偵測：哪些實體沒有接到列印板。
+ * Floating-solid detection: which solids do not reach the plate.
  *
- * 實際踩到的案例（2026-11-07 生日蛋糕插牌）：Tinkercad 用十個方塊拼成的模型，
- * 兩隻腳頂在 z=50、身體底從 z=51 開始，中間 1 mm 的縫肉眼看不出來。Bambu Studio 報
- * 「Levitating objects cannot be printed without supports」，但只開支撐是錯的 ——
- * 支撐會填進那條縫，拆掉後腳和身體斷成兩截。
+ * The real case that hit this (2026-11-07, a birthday-cake topper): a model built from ten
+ * boxes in Tinkercad, with two legs ending at z=50 and the body starting at z=51. The 1 mm gap
+ * in between is invisible to the eye. Bambu Studio reports
+ * "Levitating objects cannot be printed without supports", but simply enabling supports is
+ * wrong: the support fills that gap, and once it is removed the legs and body come apart.
  *
- * 整體外框與懸空角都抓不到這件事：模型最低點確實在板子上（腳），每個面的角度也正常。
- * 要看的是**連通性**：把幾何拆成殼、把互相接觸或穿透的殼併成實體，再看每個實體碰不碰得到板子。
+ * Neither the overall bounding box nor overhang angles catch this: the model's lowest point
+ * really is on the plate (the legs), and every face angle is normal. What matters is
+ * **connectivity**: split the geometry into shells, merge shells that touch or interpenetrate
+ * into solids, then check whether each solid reaches the plate.
  *
- * 三層合併：
- * 1. 殼：共用頂點的三角形屬於同一個殼（同一個 Tinkercad 基本形狀）。
- * 2. 接觸：表面貼合或互相穿透的殼是同一顆實體（交給 groupRigidBodies，跟間隙量測同一套判準）。
- * 3. 包含：整個藏在另一個實體內部的殼（例如被橫幅包住的眼睛）沒有任何表面接觸，
- *    但切片時會被聯集吃掉，不能報成浮空。用射線奇偶測試判斷。
+ * Three levels of merging:
+ * 1. Shell: triangles that share vertices belong to the same shell (one Tinkercad primitive).
+ * 2. Contact: shells whose surfaces coincide or interpenetrate are the same solid (delegated to
+ *    groupRigidBodies, the same criterion as clearance measurement).
+ * 3. Containment: a shell hidden entirely inside another solid (e.g. an eye enclosed by a
+ *    banner) has no surface contact at all, but is absorbed by the union at slicing time and
+ *    must not be reported as floating. Decided with a ray parity test.
  */
 
 export type FloatingBody = {
   readonly name: string;
   readonly partNames: readonly string[];
   readonly boundingBox: BoundingBox;
-  /** 這塊實體最低點離列印板的高度。 */
+  /** Height of this solid's lowest point above the plate. */
   readonly liftMm: number;
-  /** 離它最近的另一塊實體（通常就是該接上去的那塊）。 */
+  /** The nearest other solid (usually the one it should be attached to). */
   readonly nearestBody: string | undefined;
-  /** 與最近實體之間的最小距離；就是那條縫的寬度。 */
+  /** Minimum distance to the nearest solid; this is the width of the gap. */
   readonly gapMm: number | undefined;
   readonly gapAt: Vec3 | undefined;
 };
@@ -42,11 +47,11 @@ export type FloatingReport = {
 };
 
 export type FloatingOptions = {
-  /** 實體最低點離板子在這個距離內就算有接到。 */
+  /** A solid whose lowest point is within this distance of the plate counts as grounded. */
   readonly bedToleranceMm: number;
-  /** 小於這個距離視為接觸。 */
+  /** Anything closer than this counts as contact. */
   readonly fuseEpsilonMm: number;
-  /** 找最近實體時，外框距離超過這個值就不比對。 */
+  /** When looking for the nearest solid, skip candidates whose bounding boxes are farther than this. */
   readonly neighbourSearchMm: number;
 };
 
@@ -56,7 +61,7 @@ export const DEFAULT_FLOATING_OPTIONS: FloatingOptions = {
   neighbourSearchMm: 20,
 };
 
-// ── 殼 ──────────────────────────────────────────────────────────────────
+// ── Shells ──────────────────────────────────────────────────────────────
 
 const QUANTUM = 1e5;
 
@@ -65,10 +70,10 @@ function vertexKey(v: Vec3): string {
 }
 
 /**
- * 依共用頂點把三角形分成連通的殼。
+ * Split triangles into connected shells by shared vertices.
  *
- * STL 是整包三角形湯，Tinkercad 匯出時每個基本形狀還是各自一個殼；
- * 3MF／OBJ 的單一零件裡也可能有好幾個殼（例如文字的每個字母）。
+ * An STL is one big triangle soup, yet each primitive in a Tinkercad export is still its own
+ * shell; a single part in 3MF/OBJ can also contain several shells (e.g. each letter of a text).
  */
 export function splitShells(triangles: readonly Triangle[]): readonly (readonly Triangle[])[] {
   const ids = new Map<string, number>();
@@ -87,7 +92,8 @@ export function splitShells(triangles: readonly Triangle[]): readonly (readonly 
   const find = (index: number): number => {
     let root = index;
     while (parent[root] !== root) root = parent[root] ?? root;
-    // 路徑壓縮：大網格（數十萬頂點）沒有這步會退化成線性鏈。
+    // Path compression: without it, large meshes (hundreds of thousands of vertices)
+    // degenerate into linear chains.
     let cursor = index;
     while (parent[cursor] !== root) {
       const next = parent[cursor] ?? root;
@@ -119,13 +125,14 @@ export function splitShells(triangles: readonly Triangle[]): readonly (readonly 
   return [...shells.values()];
 }
 
-// ── 包含 ────────────────────────────────────────────────────────────────
+// ── Containment ─────────────────────────────────────────────────────────
 
 /**
- * 點是否在封閉網格內部（射線奇偶法）。
+ * Whether a point is inside a closed mesh (ray parity test).
  *
- * 射線方向故意取一個不對齊任何軸的方向：沿軸射線很容易剛好掃過方塊的稜線或頂點，
- * 一條稜線被兩個三角形各算一次，奇偶就錯了。
+ * The ray direction is deliberately not aligned with any axis: an axis-aligned ray easily
+ * grazes exactly along a box edge or vertex, an edge then gets counted once by each of its two
+ * triangles, and the parity comes out wrong.
  */
 const RAY = (() => {
   const raw = { x: 0.1234, y: 0.2345, z: 0.9643 };
@@ -176,9 +183,12 @@ function boxContains(outer: BoundingBox, inner: BoundingBox): boolean {
   );
 }
 
-// ── 主流程 ──────────────────────────────────────────────────────────────
+// ── Main flow ───────────────────────────────────────────────────────────
 
-/** 只有真的會印出來的零件才算數；挖除體、修飾體、支撐控制體都不是實體。 */
+/**
+ * Only parts that will actually be printed count; negative volumes, modifiers and
+ * support blockers/enforcers are not solids.
+ */
 function isSolid(part: MeshPart): boolean {
   return part.subtype === undefined || part.subtype === 'normal_part';
 }
@@ -187,7 +197,8 @@ export function findFloatingBodies(
   parts: readonly MeshPart[],
   options: FloatingOptions = DEFAULT_FLOATING_OPTIONS,
 ): FloatingReport {
-  // 殼的名稱必須唯一：分群結果只帶回名稱，要靠名稱對回殼。3MF 裡同名零件很常見。
+  // Shell names must be unique: grouping returns only names, and shells are mapped back by
+  // name. Parts with duplicate names are common in 3MF.
   const used = new Map<string, number>();
   const unique = (name: string): string => {
     const count = used.get(name) ?? 0;
@@ -214,11 +225,14 @@ export function findFloatingBodies(
 
   const bedZ = Math.min(...bodies.map((body) => body.boundingBox.min.z));
 
-  // 包含關係：被另一塊實體整個包住的實體，跟外面那塊算同一塊。
+  // Containment: a solid entirely enclosed by another solid counts as the same piece as the
+  // outer one.
   //
-  // 奇偶測試必須逐「殼」做，不能拿整塊實體的三角形去數。一塊實體常是好幾個互相穿透的
-  // 封閉殼（Tinkercad 的方塊疊在一起），點同時落在兩個重疊的殼裡時，交點數是奇＋奇＝偶，
-  // 會被誤判成在外面。真實模型上實測：被橫幅包住的字母因此被報成浮空。
+  // The parity test must be done per *shell*, not by counting all of a solid's triangles. A
+  // solid is often several interpenetrating closed shells (Tinkercad boxes stacked together);
+  // when a point lies inside two overlapping shells at once, the crossing count is
+  // odd + odd = even and the point is wrongly judged to be outside. Observed on a real model:
+  // letters enclosed by a banner were reported as floating because of this.
   const parent = bodies.map((_, index) => index);
   const find = (index: number): number => {
     let root = index;
@@ -261,15 +275,17 @@ export function findFloatingBodies(
   }
 
   const floating: FloatingBody[] = floatingClusters.map((members) => {
-    // 名稱與外框取「外層」那塊：包含合併時被包住的放在後面。
+    // Take the name and bounding box from the outer piece: in a containment merge the
+    // enclosed pieces go last.
     const sorted = [...members].sort(
       (left, right) => right.set.triangles.length - left.set.triangles.length,
     );
     const main = sorted[0] as RigidBody;
     const lowest = Math.min(...members.map((body) => body.boundingBox.min.z));
 
-    // 最近的實體優先找「站在板子上的」：那才是它該接上去的對象。
-    // 不然兩塊都浮空的字母會互相指認，報出一條跟問題無關的縫。
+    // For the nearest solid, prefer ones that stand on the plate: that is what it should be
+    // attached to. Otherwise two floating letters would point at each other and report a gap
+    // unrelated to the problem.
     const nearestAmong = (candidates: readonly RigidBody[]) => {
       let best: { body: RigidBody; distanceMm: number; at: Vec3 } | undefined;
       for (const other of candidates) {

@@ -61,11 +61,11 @@ function message(error: unknown): string {
 }
 
 /**
- * 拿掉值為 undefined 的欄位。
+ * Drop fields whose value is undefined.
  *
- * zod 的 `.optional()` 產出 `T | undefined`，但本專案開了 `exactOptionalPropertyTypes`，
- * 「不存在」與「存在但為 undefined」是兩件事。直接轉交會被型別系統擋下來，
- * 而且真的傳 undefined 進去會覆蓋掉下游的預設值。
+ * zod's `.optional()` produces `T | undefined`, but this project enables `exactOptionalPropertyTypes`,
+ * where "absent" and "present but undefined" are different things. Passing the value straight through is
+ * rejected by the type checker, and actually passing undefined would override the downstream defaults.
  */
 function compact<T extends Record<string, unknown>>(value: T): { [K in keyof T]?: NonNullable<T[K]> } {
   const result: Record<string, unknown> = {};
@@ -83,14 +83,16 @@ const READ_ONLY = {
 } as const;
 
 export function registerTools(server: McpServer, { service }: ToolDependencies): void {
-  // ── 狀態 ─────────────────────────────────────────────────────────────
+  // ── Status ──────────────────────────────────────────────────────────────
   server.registerTool(
     'bambu_get_status',
     {
-      title: '讀取 Bambu Studio companion 狀態',
+      title: 'Get Bambu Studio companion status',
       description:
-        '回報 BambuStudio 資料目錄、切片執行檔是否可用、preset 數量、目前在 Studio 選用的機器與材料、' +
-        '允許的模型目錄，以及各模型平台的整合層級。無副作用。',
+        'Reports the BambuStudio data directory, whether the slicer executable is available, preset counts, ' +
+        'the machine and filaments currently selected in Studio, the allowed model directories, and the ' +
+        'integration level of each model platform. Use it first to see what this server can do on this machine. ' +
+        'No side effects.',
       inputSchema: getStatusInputSchema,
       outputSchema: statusOutputSchema,
       annotations: READ_ONLY,
@@ -98,23 +100,24 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
     async () => {
       const status = service.status();
       const parts = [
-        `BambuStudio 資料目錄 ${status.dataDir}`,
-        status.slicerAvailable ? '切片器可用' : `切片器不可用（${status.slicerPath}）`,
-        `preset：machine ${status.presetCounts.machine}／process ${status.presetCounts.process}／filament ${status.presetCounts.filament}`,
-        '所有切片都會先展平 preset 繼承鏈',
+        `BambuStudio data directory ${status.dataDir}`,
+        status.slicerAvailable ? 'slicer available' : `slicer not available (${status.slicerPath})`,
+        `presets: machine ${status.presetCounts.machine} / process ${status.presetCounts.process} / filament ${status.presetCounts.filament}`,
+        'every slice flattens the preset inheritance chain first',
       ];
-      return ok({ ...status }, parts.join('；') + '。');
+      return ok({ ...status }, parts.join('; ') + '.');
     },
   );
 
-  // ── preset ───────────────────────────────────────────────────────────
+  // ── Presets ─────────────────────────────────────────────────────────────
   server.registerTool(
     'bambu_list_presets',
     {
-      title: '列出 preset',
+      title: 'List presets',
       description:
-        '列出機器、製程或材料 preset。預設只回可在 UI 選用的 preset，' +
-        '過濾掉只供繼承的中間層（例如 fdm_process_common）。無副作用。',
+        'Lists machine, process or filament presets. By default only presets selectable in the UI are returned; ' +
+        'intermediate presets that exist only to be inherited from (e.g. fdm_process_common) are filtered out. ' +
+        'Names listed here do not show real setting values; use bambu_resolve_preset for that. No side effects.',
       inputSchema: listPresetsInputSchema,
       outputSchema: listPresetsOutputSchema,
       annotations: READ_ONLY,
@@ -140,7 +143,7 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
               relativePath: entry.relativePath,
             })),
           },
-          `${kind} preset 共 ${total} 個，回傳 ${entries.length} 個。`,
+          `${kind} presets: ${total} in total, ${entries.length} returned.`,
         );
       } catch (error) {
         return fail({ kind, total: 0, returned: 0, entries: [] }, message(error));
@@ -151,11 +154,12 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
   server.registerTool(
     'bambu_resolve_preset',
     {
-      title: '展平 preset 繼承鏈',
+      title: 'Flatten a preset inheritance chain',
       description:
-        '把 preset 的 inherits 鏈展平成完整設定，並標明每個值來自哪一層。' +
-        'BambuStudio 的葉節點 preset 通常只宣告數十個 key，其餘全部繼承自上層 —— ' +
-        '要知道某個參數的真實值，必須看展平結果而不是葉節點檔案。無副作用。',
+        'Flattens a preset\'s inherits chain into the complete settings and records which level each value comes from. ' +
+        'A BambuStudio leaf preset usually declares only a few dozen keys and inherits everything else from its parents, ' +
+        'so to know the real value of any parameter you must look at the flattened result, not the leaf preset file. ' +
+        'Use this whenever you need an actual setting value. No side effects.',
       inputSchema: resolvePresetInputSchema,
       outputSchema: resolvePresetOutputSchema,
       annotations: READ_ONLY,
@@ -174,8 +178,8 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
             settings: resolved.settings,
             provenance: resolved.provenance,
           },
-          `${args.name} 展平後有 ${Object.keys(resolved.settings).length} 個設定，` +
-            `繼承鏈：${resolved.inheritanceChain.join(' <- ')}。`,
+          `${args.name} has ${Object.keys(resolved.settings).length} settings after flattening; ` +
+            `inheritance chain: ${resolved.inheritanceChain.join(' <- ')}.`,
         );
       } catch (error) {
         return fail(
@@ -197,10 +201,11 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
   server.registerTool(
     'bambu_compare_presets',
     {
-      title: '比較兩個 preset',
+      title: 'Compare two presets',
       description:
-        '展平兩個同類 preset 後列出差異。用來回答「0.20 Standard 跟 0.20 Strength 到底差在哪」' +
-        '這種問題，不必人工翻四層 JSON。無副作用。',
+        'Flattens two presets of the same kind and lists the settings that differ. Use it to answer questions like ' +
+        '"what exactly is the difference between 0.20 Standard and 0.20 Strength" without reading four levels of JSON by hand. ' +
+        'No side effects.',
       inputSchema: comparePresetsInputSchema,
       outputSchema: comparePresetsOutputSchema,
       annotations: READ_ONLY,
@@ -221,7 +226,7 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
               ...(entry.right === undefined ? {} : { right: entry.right }),
             })),
           },
-          `${args.left} 與 ${args.right} 有 ${result.differences.length} 個設定不同。`,
+          `${args.left} and ${args.right} differ in ${result.differences.length} settings.`,
         );
       } catch (error) {
         return fail(
@@ -232,14 +237,14 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
     },
   );
 
-  // ── 參數知識 ─────────────────────────────────────────────────────────
+  // ── Parameter knowledge ─────────────────────────────────────────────────
   server.registerTool(
     'bambu_describe_parameters',
     {
-      title: '查參數的意義與代價',
+      title: 'Explain parameters and their trade-offs',
       description:
-        '說明參數在做什麼、單位、建議區間，以及調高與調低各自的代價與牽連參數。' +
-        '調任何參數之前先查這個，避免用「聽起來合理」的方式亂調。無副作用。',
+        'Explains what a parameter does, its unit, its typical range, the cost of raising or lowering it, and related parameters. ' +
+        'Call this before changing any parameter, instead of tuning by what merely sounds reasonable. No side effects.',
       inputSchema: describeParametersInputSchema,
       outputSchema: describeParametersOutputSchema,
       annotations: READ_ONLY,
@@ -268,8 +273,8 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
           unknown,
         },
         unknown.length === 0
-          ? `回傳 ${specs.length} 個參數說明。`
-          : `回傳 ${specs.length} 個參數說明；catalog 未收錄：${unknown.join('、')}。`,
+          ? `Parameter descriptions returned: ${specs.length}.`
+          : `Parameter descriptions returned: ${specs.length}; not in the catalog: ${unknown.join(', ')}.`,
       );
     },
   );
@@ -277,11 +282,13 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
   server.registerTool(
     'bambu_diagnose',
     {
-      title: '從列印失敗現象推參數',
+      title: 'Diagnose a print failure from its symptom',
       description:
-        '輸入觀察到的現象（翹邊、牽絲、層裂、象腿、頂面有洞……），回傳有序的處置建議：' +
-        '每一步都附上原理、建議值與代價。比對不到已知症狀時會明說，不會猜。' +
-        '也會指出哪些問題根本不是參數能解的。無副作用。',
+        'Takes an observed symptom (warping, stringing, layer separation, elephant\'s foot, holes in the top surface, ...) ' +
+        'and returns an ordered list of remedies, each with its mechanism, a suggested value and its cost. ' +
+        'Use it when the user describes what went wrong rather than which parameter to change; apply one remedy at a time. ' +
+        'If no known symptom matches, it says so instead of guessing. It also points out problems that no parameter can fix. ' +
+        'No side effects.',
       inputSchema: diagnoseInputSchema,
       outputSchema: diagnoseOutputSchema,
       annotations: READ_ONLY,
@@ -317,8 +324,8 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
           ...(result.note === undefined ? {} : { note: result.note }),
         },
         result.matched.length === 0
-          ? (result.note ?? '沒有比對到症狀。')
-          : `比對到 ${result.matched.map((entry) => entry.label).join('、')}。`,
+          ? (result.note ?? 'No symptom matched.')
+          : `Matched: ${result.matched.map((entry) => entry.label).join(', ')}.`,
       );
     },
   );
@@ -326,14 +333,16 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
   server.registerTool(
     'bambu_plan_settings',
     {
-      title: '依目標規劃參數',
+      title: 'Plan settings for a goal',
       description:
-        '說出你要什麼（穩妥不失敗／省時／受力強度／外觀表面／省料），回傳有序的參數調整，' +
-        '依「在對付什麼」分組：附著與翹曲、噴頭碰撞、表面品質、結構強度、時間、耗材。' +
-        '每一項都附原理、建議值、代價，以及**目前 preset 裡的實際值與它的形狀**' +
-        '（per-extruder 參數要用陣列覆寫，塞純量會落空）。' +
-        '給了 modelPath 會先做可列印性分析，依幾何追加條件式調整。' +
-        '這是事前規劃；已經印壞了要回推成因請用 bambu_diagnose。無副作用。',
+        'Given what you want (safe and failure-free / fast / strong under load / good surface / economical), returns ordered ' +
+        'parameter adjustments grouped by what they counter: adhesion and warping, nozzle collisions, surface quality, ' +
+        'structural strength, time, filament. Each move includes its mechanism, a suggested value, its cost, and ' +
+        '**the actual value in the current preset and its shape** ' +
+        '(per-extruder parameters must be overridden with an array; a scalar is silently not applied). ' +
+        'If modelPath is given, a printability analysis runs first and conditional adjustments are added based on the geometry. ' +
+        'This is for planning before a print; to work back from a print that already failed, use bambu_diagnose. ' +
+        'It only returns a plan and changes nothing. No side effects.',
       inputSchema: planSettingsInputSchema,
       outputSchema: planSettingsOutputSchema,
       annotations: READ_ONLY,
@@ -398,11 +407,11 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
             ...(plan.note === undefined ? {} : { note: plan.note }),
           },
           plan.goal === undefined
-            ? (plan.note ?? '沒有比對到目標。')
-            : `目標「${plan.goal.label}」：${plan.moves.length} 項調整（` +
-              [...byConcern].map(([label, count]) => `${label} ${count}`).join('、') +
-              `）` +
-              (triggered.length === 0 ? '。' : `，其中 ${triggered.length} 項由模型幾何觸發。`),
+            ? (plan.note ?? 'No goal matched.')
+            : `Goal "${plan.goal.label}": ${plan.moves.length} adjustments (` +
+              [...byConcern].map(([label, count]) => `${label} ${count}`).join(', ') +
+              `)` +
+              (triggered.length === 0 ? '.' : `, ${triggered.length} of them triggered by the model geometry.`),
         );
       } catch (error) {
         return fail({ available: [], moves: [] }, message(error));
@@ -413,14 +422,18 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
   server.registerTool(
     'bambu_optimize_print_in_place',
     {
-      title: '自動建立 print-in-place 穩定 preset',
+      title: 'Create a stabilised print-in-place preset',
       description:
-        '從指定或目前的 process preset 建立一份可直接在 Bambu Studio 使用的自動穩定版。' +
-        '會精確套用首層外框 20 mm/s、首層填充 30 mm/s、外牆上限 60 mm/s、懸空減速、' +
-        '繞開已印牆面、Monotonic line、關閉熨燙與 Fuzzy Skin。' +
-        '若來源是既有使用者 preset，會保留其中的尺寸／象腿等葉節點校正，但新檔仍直接繼承原廠 preset。' +
-        '預設明確關閉 Auto Brim，避免黏死齒輪間隙；可明確要求 Brim Ears，且仍會提醒檢查第一層。' +
-        '不修改材料溫度、冷卻或流量，因為普通 PLA 與 Silk PLA 必須分開校正。會寫入使用者 profile。',
+        'Creates an auto-stabilised copy of the given (or currently selected) process preset that can be used directly in Bambu Studio. ' +
+        'Use it when small print-in-place parts detach from the bed or get dragged off by the nozzle. ' +
+        'It applies exactly: first-layer outer wall 20 mm/s, first-layer infill 30 mm/s, outer wall capped at 60 mm/s, ' +
+        'slowdown for overhangs, avoid crossing printed walls, Monotonic line, and ironing and Fuzzy Skin turned off. ' +
+        'If the source is an existing user preset, its leaf-level calibrations (dimensions, elephant\'s foot, etc.) are kept, ' +
+        'but the new file still inherits directly from the system preset. ' +
+        'By default Auto Brim is explicitly turned off so the brim does not fuse gear clearances; Brim Ears can be requested explicitly, ' +
+        'and you will still be reminded to check the first layer. ' +
+        'It does not change filament temperature, cooling or flow, because regular PLA and Silk PLA must be calibrated separately. ' +
+        'Writes a file to the user profile directory; takes effect after Bambu Studio is restarted.',
       inputSchema: optimizePrintInPlaceInputSchema,
       outputSchema: optimizePrintInPlaceOutputSchema,
       annotations: {
@@ -451,10 +464,10 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
             preservedKeys: optimized.preservedKeys,
             warnings: optimized.warnings,
             manualActions: optimized.manualActions,
-            nextStep: '正常關閉並重新開啟 Bambu Studio 後，在 Process 下拉選單選用這份 preset。',
+            nextStep: 'Close Bambu Studio normally and reopen it, then select this preset in the Process dropdown.',
           },
-          `${optimized.result.overwritten ? '已更新' : '已建立'}「${optimized.name}」；` +
-            `自動調整 ${optimized.changes.length} 項，保留 ${optimized.preservedKeys.length} 項既有覆寫。`,
+          `${optimized.result.overwritten ? 'Updated' : 'Created'} "${optimized.name}"; ` +
+            `settings adjusted automatically: ${optimized.changes.length}; existing overrides kept: ${optimized.preservedKeys.length}.`,
         );
       } catch (error) {
         return fail(
@@ -478,16 +491,16 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
     },
   );
 
-  // ── 寫入 Studio ──────────────────────────────────────────────────────
+  // ── Writing to Studio ───────────────────────────────────────────────────
   server.registerTool(
     'bambu_save_user_preset',
     {
-      title: '寫入使用者 preset 到 Bambu Studio',
+      title: 'Save a user preset to Bambu Studio',
       description:
-        '在 BambuStudio 使用者 profile 目錄建立一個繼承原廠 preset 的自訂 preset，' +
-        '重啟 Bambu Studio 後會出現在下拉選單。' +
-        'BambuStudio 沒有 plugin API（見 bambulab/BambuStudio#9614），這是讓 AI 調整的參數' +
-        '進到 GUI 的唯一途徑。會寫檔；同名 preset 不會靜默覆蓋。',
+        'Creates a custom preset that inherits from a system preset, in the BambuStudio user profile directory; ' +
+        'it appears in the dropdown after Bambu Studio is restarted. ' +
+        'BambuStudio has no plugin API (see bambulab/BambuStudio#9614), so this is the only way to get parameters ' +
+        'tuned by an AI into the GUI. Writes a file; an existing preset with the same name is never silently overwritten.',
       inputSchema: saveUserPresetInputSchema,
       outputSchema: saveUserPresetOutputSchema,
       annotations: {
@@ -512,10 +525,10 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
             created: result.created,
             overwritten: result.overwritten,
             warnings,
-            nextStep: '重新啟動 Bambu Studio，這個 preset 就會出現在對應的下拉選單裡。',
+            nextStep: 'Restart Bambu Studio and this preset will appear in the matching dropdown.',
           },
-          `${result.overwritten ? '已取代' : '已建立'} preset「${args.name}」：${result.path}。` +
-            (warnings.length === 0 ? '' : `另有 ${warnings.length} 項提醒。`),
+          `${result.overwritten ? 'Replaced' : 'Created'} preset "${args.name}": ${result.path}.` +
+            (warnings.length === 0 ? '' : ` Warnings: ${warnings.length}.`),
         );
       } catch (error) {
         return fail(
@@ -526,16 +539,19 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
     },
   );
 
-  // ── 切片 ─────────────────────────────────────────────────────────────
+  // ── Slicing ─────────────────────────────────────────────────────────────
   server.registerTool(
     'bambu_slice',
     {
-      title: '切片（展平繼承鏈後執行）',
+      title: 'Slice (after flattening the inheritance chain)',
       description:
-        '用 BambuStudio CLI 切片並回報真實統計：層數、列印時間、耗材重量。' +
-        'preset 會先展平再交給 CLI —— 直接餵原始 preset 給 CLI 會讓繼承來的參數全部掉回內建預設值' +
-        '（BambuStudio#1704）。切完會從產物讀回實際生效的設定，逐項稽核你要求的覆寫有沒有落實。' +
-        '會啟動子行程並寫出 .gcode.3mf 到設定的輸出目錄。',
+        'Slices with the BambuStudio CLI and reports real statistics: layer count, print time, filament weight. ' +
+        'Presets are flattened before they are passed to the CLI; feeding the raw presets to the CLI makes every inherited ' +
+        'parameter fall back to the built-in default (BambuStudio#1704), so do not call the CLI directly. ' +
+        'After slicing, it reads the settings that actually took effect back from the output and audits each override you requested; ' +
+        'an overrideAudit entry with honoured = false was not applied. ' +
+        'Starts a child process and writes a .gcode.3mf to the configured output directory. ' +
+        'It does not send anything to a printer or start a print.',
       inputSchema: sliceInputSchema,
       outputSchema: sliceOutputSchema,
       annotations: {
@@ -564,7 +580,7 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
         const time = result.stats.totalEstimatedTimeSeconds ?? result.stats.modelPrintTimeSeconds;
         const missed = result.overrideAudit.filter((entry) => !entry.honoured);
 
-        // 只回報被要求的參數。產物有 568 個 key，整包倒回去對模型沒有意義。
+        // Report only the requested parameters. The output has 568 keys; dumping all of them back is useless to the model.
         const reported: Record<string, unknown> = {};
         for (const key of args.reportSettings ?? []) {
           const value = result.appliedSettings[key];
@@ -585,18 +601,18 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
             })),
             warnings: result.warnings,
           },
-          `切片完成：${result.stats.layerCount} 層` +
-            (time === undefined ? '' : `、約 ${formatDuration(time)}`) +
+          `Sliced: ${result.stats.layerCount} layers` +
+            (time === undefined ? '' : `, about ${formatDuration(time)}`) +
             (result.stats.filamentGrams === undefined
               ? ''
-              : `、${result.stats.filamentGrams} g` +
+              : `, ${result.stats.filamentGrams} g` +
                 (result.stats.filamentBreakdown === undefined
                   ? ''
-                  : `（${result.stats.filamentBreakdown.length} 色合計）`)) +
-            '。' +
+                  : ` (total of ${result.stats.filamentBreakdown.length} colours)`)) +
+            '.' +
             (missed.length === 0
               ? ''
-              : ` 注意：${missed.length} 項覆寫未生效（${missed.map((entry) => entry.key).join('、')}）。`),
+              : ` Warning: ${missed.length} override(s) not honoured (${missed.map((entry) => entry.key).join(', ')}).`),
         );
       } catch (error) {
         return fail({ ok: false, reason: message(error), stderrTail: [] }, message(error));
@@ -604,16 +620,17 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
     },
   );
 
-  // ── 模型 ─────────────────────────────────────────────────────────────
+  // ── Models ──────────────────────────────────────────────────────────────
   server.registerTool(
     'bambu_inspect_model',
     {
-      title: '檢查模型幾何',
+      title: 'Inspect model geometry',
       description:
-        '解析 STL（binary 或 ASCII）、3MF 或 OBJ，回報三角形數、外框尺寸、體積、表面積與網格是否封閉。' +
-        '格式依檔案內容判斷，不看副檔名。3MF 與 OBJ 會一併回報零件數與零件清單' +
-        '（3MF 座標已套用擺放 transform；OBJ 依 o／g 分零件，Tinkercad 的彩色匯出就是 OBJ）。' +
-        '只讀允許目錄內的檔案。無副作用。',
+        'Parses an STL (binary or ASCII), 3MF or OBJ and reports triangle count, bounding box, volume, surface area, ' +
+        'and whether the mesh is closed. The format is detected from the file content, not the extension. ' +
+        'For 3MF and OBJ it also reports the part count and part list ' +
+        '(3MF coordinates have the placement transform applied; OBJ is split into parts by o / g, and Tinkercad\'s colour export is OBJ). ' +
+        'Reads only files inside the allowed directories. No side effects.',
       inputSchema: inspectModelInputSchema,
       outputSchema: inspectModelOutputSchema,
       annotations: READ_ONLY,
@@ -624,10 +641,10 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
         const size = inspection.boundingBox.size;
         return ok(
           { ...inspection },
-          `${inspection.format.toUpperCase()}，${inspection.triangleCount} 個三角形` +
-            (inspection.partCount > 1 ? `（${inspection.partCount} 個零件）` : '') +
-            `，尺寸 ${size.x.toFixed(1)}×${size.y.toFixed(1)}×${size.z.toFixed(1)} mm，` +
-            (inspection.closed ? '網格封閉。' : `網格未封閉（${inspection.openEdges} 條開放邊）。`),
+          `${inspection.format.toUpperCase()}, ${inspection.triangleCount} triangles` +
+            (inspection.partCount > 1 ? ` (${inspection.partCount} parts)` : '') +
+            `, size ${size.x.toFixed(1)}×${size.y.toFixed(1)}×${size.z.toFixed(1)} mm, ` +
+            (inspection.closed ? 'mesh closed.' : `mesh not closed (${inspection.openEdges} open edges).`),
         );
       } catch (error) {
         return fail(
@@ -653,14 +670,17 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
   server.registerTool(
     'bambu_check_printability',
     {
-      title: '列印可行性檢查',
+      title: 'Check printability',
       description:
-        '切片前先看得出來的問題：超出列印範圍、沒接到列印板的浮空實體、網格未封閉、陡峭懸空佔比、底面積過小、' +
-        '高寬比過大、特徵過薄、大面積底面的翹曲風險。每一項都附上相關參數。' +
-        '浮空偵測會拆殼、把接觸或穿透的殼併成實體、把整個包在別的實體裡的殼併進去，再看每塊碰不碰得到板子，' +
-        '並量出與最近實體的縫寬：窄縫是建模沒接上（開支撐會讓它印完分家），寬縫才是真的要支撐。' +
-        '吃 STL、3MF 與 OBJ。' +
-        '這是幾何分析不是切片模擬，模型內部的薄壁必須實際切片才看得到。無副作用。',
+        'Finds problems visible before slicing: exceeding the build volume, floating bodies that do not touch the plate, ' +
+        'an unclosed mesh, the share of steep overhangs, too small a base area, too high an aspect ratio, features that are too thin, ' +
+        'and warping risk on large bottom surfaces. Each finding lists the related parameters. ' +
+        'Floating detection splits the mesh into shells, merges shells that touch or intersect into bodies, merges shells fully enclosed ' +
+        'by another body into it, then checks whether each body reaches the plate and measures the gap to the nearest body: ' +
+        'a narrow gap means the parts were not joined in the model (turning on support would make them print as separate pieces); ' +
+        'only a wide gap really needs support. ' +
+        'Accepts STL, 3MF and OBJ. ' +
+        'This is geometric analysis, not a slicing simulation; thin walls inside the model only show up when actually sliced. No side effects.',
       inputSchema: checkPrintabilityInputSchema,
       outputSchema: checkPrintabilityOutputSchema,
       annotations: READ_ONLY,
@@ -678,8 +698,8 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
         return ok(
           { ...report },
           blockers.length > 0
-            ? `有 ${blockers.length} 項阻斷問題：${blockers.map((finding) => finding.summary).join('；')}。`
-            : `可以列印。共 ${report.findings.length} 項提醒，懸空面積佔 ${(report.overhangAreaRatio * 100).toFixed(1)}%。`,
+            ? `Blocking problems (${blockers.length}): ${blockers.map((finding) => finding.summary).join('; ')}.`
+            : `Printable. Findings: ${report.findings.length}; overhangs are ${(report.overhangAreaRatio * 100).toFixed(1)}% of the surface area.`,
         );
       } catch (error) {
         return fail(
@@ -712,12 +732,14 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
   server.registerTool(
     'bambu_measure_clearance',
     {
-      title: '量測零件之間的間隙',
+      title: 'Measure clearance between parts',
       description:
-        '量出 3MF 或 OBJ 裡各零件之間的最小間隙，判斷列印即組裝（print-in-place）的機構印完會不會黏死。' +
-        '會先把互相接觸的零件併成剛體再比對 —— Bambu 把「同一顆實體的換色段落」也存成獨立零件，' +
-        '不併就會把同一塊東西報成「間隙 0」。間隙不足時會給出補償建議，並區分外輪廓與孔洞' +
-        '（被包住的那一側在切片器眼中是孔，吃的是不同的參數）。STL 沒有零件邊界，量不了。無副作用。',
+        'Measures the smallest clearance between the parts in a 3MF or OBJ, to judge whether a print-in-place mechanism will fuse when printed. ' +
+        'Parts that touch each other are first merged into rigid bodies before comparing, because Bambu also stores ' +
+        'the colour-change segments of a single solid as separate parts; without merging, one piece would be reported as "clearance 0". ' +
+        'When the clearance is too small it suggests compensation, distinguishing outer contours from holes ' +
+        '(the enclosed side is a hole to the slicer and is controlled by a different parameter). ' +
+        'STL has no part boundaries, so it cannot be measured. No side effects.',
       inputSchema: measureClearanceInputSchema,
       outputSchema: measureClearanceOutputSchema,
       annotations: READ_ONLY,
@@ -735,12 +757,12 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
         const fusing = report.pairs.filter((pair) => pair.verdict === 'will-fuse').length;
         const summary =
           report.tightestGapMm === undefined
-            ? `${report.bodies.length} 顆實體，沒有距離在門檻內的零件配對。`
-            : `${report.bodies.length} 顆實體、${report.pairs.length} 組介面，` +
-              `最緊 ${report.tightestGapMm.toFixed(3)} mm` +
+            ? `${report.bodies.length} bodies; no part pairs within the reporting threshold.`
+            : `${report.bodies.length} bodies, ${report.pairs.length} interfaces, ` +
+              `tightest ${report.tightestGapMm.toFixed(3)} mm` +
               (fusing > 0
-                ? `，其中 ${fusing} 組低於 ${report.minimumClearanceMm} mm 會黏死。`
-                : '，都在可靠區間。');
+                ? `; ${fusing} of them are below ${report.minimumClearanceMm} mm and will fuse.`
+                : '; all within the reliable range.');
 
         return ok({ ...report }, summary);
       } catch (error) {
@@ -759,16 +781,17 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
     },
   );
 
-  // ── 組裝 3MF ─────────────────────────────────────────────────────────
+  // ── Composing 3MF ───────────────────────────────────────────────────────
   server.registerTool(
     'bambu_compose_model',
     {
-      title: '組裝含挖除體／修飾體的 3MF',
+      title: 'Compose a 3MF with negative / modifier parts',
       description:
-        '用「本體 STL + 附加零件」組出 Bambu 專案 3MF。挖除體（negative_part）挖掉重疊處、' +
-        '修飾體（modifier_part）讓該區域套用不同參數、support_blocker／support_enforcer 控制支撐。' +
-        '這些在 Bambu 的模型裡就是「多一個零件加一個標籤」，不需要幾何運算引擎。' +
-        '產出可以用 bambu_inspect_project 逐項讀回驗證，或直接餵給 bambu_slice。會寫檔到輸出目錄。',
+        'Builds a Bambu project 3MF from a base body STL plus extra parts. A negative part (negative_part) cuts away where it overlaps, ' +
+        'a modifier (modifier_part) applies different settings to its region, and support_blocker / support_enforcer control support. ' +
+        'In a Bambu model each of these is just one more part with a label, so no geometry (boolean) engine is needed. ' +
+        'The output can be read back item by item with bambu_inspect_project, or passed straight to bambu_slice. ' +
+        'Writes a file to the output directory.',
       inputSchema: composeModelInputSchema,
       outputSchema: composeModelOutputSchema,
       annotations: {
@@ -802,13 +825,13 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
             parts: result.parts.map((part) => ({ ...part })),
             warnings: result.warnings,
             nextStep:
-              '用 bambu_inspect_project 確認零件結構，或直接用 bambu_slice 切片；' +
-              '比較加零件前後的 max_z_height 與耗材重量就能確認挖除體真的生效。',
+              'Check the part structure with bambu_inspect_project, or slice directly with bambu_slice; ' +
+              'comparing max_z_height and filament weight with and without the parts confirms that the negative parts really took effect.',
           },
-          `已寫出 ${result.outputPath}（${result.parts.length} 個零件）。` +
+          `Wrote ${result.outputPath} (${result.parts.length} parts).` +
             (ineffective.length === 0
               ? ''
-              : ` 注意：${ineffective.map((part) => part.name).join('、')} 與本體沒有交集，不會有效果。`),
+              : ` Warning: no intersection with the base body, so no effect: ${ineffective.map((part) => part.name).join(', ')}.`),
         );
       } catch (error) {
         return fail(
@@ -822,11 +845,12 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
   server.registerTool(
     'bambu_inspect_project',
     {
-      title: '讀回 3MF 的零件結構',
+      title: 'Read back the part structure of a 3MF',
       description:
-        '從 Bambu 專案 3MF 讀出物件與零件，包含每個零件的 subtype 與零件層級設定。' +
-        '用來驗證寫進去的東西真的在裡面 —— 這是檔案路線相對 GUI 的關鍵優勢：可以逐項比對，' +
-        '不是只能看畫面。也會標出 BambuStudio 認不得的 subtype。無副作用。',
+        'Reads the objects and parts from a Bambu project 3MF, including each part\'s subtype and per-part settings. ' +
+        'Use it to verify that what was written is really in the file; this is the key advantage of working with files ' +
+        'over the GUI: you can compare item by item instead of only looking at the screen. ' +
+        'It also flags subtypes that BambuStudio does not recognise. No side effects.',
       inputSchema: inspectProjectInputSchema,
       outputSchema: inspectProjectOutputSchema,
       annotations: READ_ONLY,
@@ -852,10 +876,10 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
               })),
             })),
           },
-          `${objects.length} 個物件、${partCount} 個零件。` +
+          `Objects: ${objects.length}, parts: ${partCount}.` +
             (unrecognised.length === 0
               ? ''
-              : ` 警告：${unrecognised.length} 個零件的 subtype 不被 BambuStudio 認得，會被當成 normal_part。`),
+              : ` Warning: ${unrecognised.length} part(s) have a subtype BambuStudio does not recognise and will be treated as normal_part.`),
         );
       } catch (error) {
         return fail({ objects: [] }, message(error));
@@ -863,15 +887,16 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
     },
   );
 
-  // ── 搜尋 ─────────────────────────────────────────────────────────────
+  // ── Search ──────────────────────────────────────────────────────────────
   server.registerTool(
     'bambu_search_models',
     {
-      title: '搜尋 3D 模型',
+      title: 'Search for 3D models',
       description:
-        '跨平台查模型。Thingiverse 走官方 API（需 THINGIVERSE_TOKEN）。' +
-        'MakerWorld 與 Printables 沒有官方公開介面，只回傳查詢連結由人自行開啟 —— ' +
-        '這是刻意的能力降級，不用爬蟲或私有 endpoint 假裝有 API。會連外網。',
+        'Searches for models across platforms. Thingiverse uses its official API (requires THINGIVERSE_TOKEN). ' +
+        'MakerWorld and Printables have no official public API, so for them only a search link is returned for a person to open; ' +
+        'this is a deliberate downgrade: no scraping or private endpoints pretending to be an API. ' +
+        'Do not claim to have searched or downloaded models from those platforms. Does not download any model. Accesses the internet.',
       inputSchema: searchModelsInputSchema,
       outputSchema: searchModelsOutputSchema,
       annotations: {
@@ -896,10 +921,10 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
             notes: result.notes,
           })),
         },
-        `找到 ${hitCount} 筆結果` +
+        `Results found: ${hitCount}` +
           (handoffs.length === 0
-            ? '。'
-            : `；${handoffs.map((result) => result.source).join('、')} 沒有官方 API，只提供查詢連結。`),
+            ? '.'
+            : `; no official API for ${handoffs.map((result) => result.source).join(', ')}, so only search links are provided.`),
       );
     },
   );

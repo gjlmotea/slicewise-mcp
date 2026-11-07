@@ -2,33 +2,33 @@ import type { PresetIndexEntry, PresetKind, PresetValue, ResolvedPreset } from '
 import type { RawPreset } from '../domain/presets/resolver.js';
 
 /**
- * preset 儲存庫：BambuStudio 的資料目錄。
+ * Preset store: BambuStudio's data directory.
  *
- * 讀取涵蓋原廠 vendor profile 與使用者自訂 profile；
- * 寫入只允許寫進使用者 profile 目錄，永遠不碰原廠目錄。
+ * Reads cover both the system vendor profiles and the user's own profiles;
+ * writes go only into the user profile directory and never touch the system directories.
  */
 export interface PresetStore {
-  /** 資料根目錄，用於狀態回報與錯誤訊息。 */
+  /** Data root directory, used in status reports and error messages. */
   readonly dataDir: string;
 
-  /** 目前綁定的使用者 profile 目錄名（BambuStudio 以帳號 id 命名）。 */
+  /** Name of the currently bound user profile directory (BambuStudio names it after the account id). */
   readonly profileId: string | undefined;
 
-  /** 列出索引；不讀取內容。 */
+  /** Lists the index; does not read preset contents. */
   list(kind: PresetKind): readonly PresetIndexEntry[];
 
-  /** 讀單一 preset 的原始 JSON。 */
+  /** Reads the raw JSON of a single preset. */
   readRaw(name: string, kind: PresetKind): RawPreset | undefined;
 
-  /** 展平繼承鏈。 */
+  /** Flattens the inheritance chain. */
   resolve(name: string, kind: PresetKind): ResolvedPreset;
 
   /**
-   * 寫入使用者 preset，讓它出現在 Bambu Studio 的下拉選單裡。
+   * Writes a user preset so it shows up in Bambu Studio's dropdowns.
    *
-   * 這是「讓 AI 調整的參數真的進到 GUI」的唯一合法途徑：
-   * BambuStudio 沒有 plugin API（見 bambulab/BambuStudio#9614），
-   * 但它啟動時會掃描使用者 profile 目錄。
+   * This is the only legitimate way to get parameters adjusted by an AI into the GUI:
+   * BambuStudio has no plugin API (see bambulab/BambuStudio#9614),
+   * but it scans the user profile directory on startup.
    */
   writeUserPreset(request: WriteUserPresetRequest): WriteUserPresetResult;
 }
@@ -36,11 +36,11 @@ export interface PresetStore {
 export type WriteUserPresetRequest = {
   readonly name: string;
   readonly kind: PresetKind;
-  /** 要繼承的原廠 preset；使用者 preset 一律掛在原廠 preset 底下。 */
+  /** The system preset to inherit from; a user preset always hangs directly under a system preset. */
   readonly inherits: string;
-  /** 相對於父層的覆寫值。 */
+  /** Override values relative to the parent. */
   readonly overrides: Readonly<Record<string, PresetValue>>;
-  /** 已存在同名 preset 時是否覆寫。預設 false。 */
+  /** Whether to overwrite an existing preset with the same name. Defaults to false. */
   readonly overwrite?: boolean;
 };
 

@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { optimizePrintInPlace } from '../../src/domain/parameters/optimizer.js';
 
-describe('print-in-place 自動最佳化', () => {
-  it('依原 preset 的純量／多噴頭形狀產生可直接寫入的值', () => {
+describe('print-in-place automatic optimization', () => {
+  it('produces directly writable values matching the original preset\'s scalar / multi-nozzle shape', () => {
     const result = optimizePrintInPlace({
       initial_layer_speed: ['50', '50'],
       initial_layer_infill_speed: ['105', '105'],
@@ -28,13 +28,13 @@ describe('print-in-place 自動最佳化', () => {
     });
   });
 
-  it('不把原本較慢的外牆速度反向提高', () => {
+  it('does not raise an outer wall speed that was already slower', () => {
     const result = optimizePrintInPlace({ outer_wall_speed: '40' });
     expect(result.overrides['outer_wall_speed']).toBe('40');
     expect(result.changes.map((change) => change.key)).not.toContain('outer_wall_speed');
   });
 
-  it('保留既有使用者校正值', () => {
+  it('preserves existing user calibration values', () => {
     const result = optimizePrintInPlace(
       { initial_layer_speed: '50' },
       { xy_hole_compensation: '0.05', elefant_foot_compensation: '0.25' },
@@ -43,10 +43,10 @@ describe('print-in-place 自動最佳化', () => {
     expect(result.overrides['elefant_foot_compensation']).toBe('0.25');
   });
 
-  it('預設不開全域 brim，只有明確要求時才加 Brim Ears', () => {
+  it('leaves the global brim off by default and adds Brim Ears only when explicitly requested', () => {
     const safe = optimizePrintInPlace({ brim_type: 'auto_brim', brim_width: '5' });
     expect(safe.overrides['brim_type']).toBe('no_brim');
-    expect(safe.manualActions.join(' ')).toMatch(/手動畫|Brim Ears/);
+    expect(safe.manualActions.join(' ')).toMatch(/paint|Brim Ears/);
 
     const withEars = optimizePrintInPlace(
       { brim_type: 'auto_brim', brim_width: '5', brim_object_gap: '0.1' },

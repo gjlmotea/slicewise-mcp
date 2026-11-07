@@ -1,65 +1,66 @@
 /**
- * Bambu Studio companion MCP 的領域契約。
+ * Domain contracts for the Bambu Studio companion MCP.
  *
- * 這一層不認識檔案系統、子行程與網路；所有外部能力都由 ports 定義、adapters 實作。
+ * This layer knows nothing about the file system, child processes or the network; every external
+ * capability is defined by ports and implemented by adapters.
  */
 
-/** Bambu Studio 的三種 preset 類別。 */
+/** The three Bambu Studio preset kinds. */
 export type PresetKind = 'machine' | 'process' | 'filament';
 
 export const PRESET_KINDS: readonly PresetKind[] = ['machine', 'process', 'filament'];
 
-/** preset 的來源：原廠 vendor 目錄或使用者目錄。 */
+/** Where a preset comes from: the system vendor directory or the user directory. */
 export type PresetOrigin = 'system' | 'user';
 
 /**
- * preset 的原始值恆為字串或字串陣列（多噴頭機種用陣列），
- * 少數 metadata 欄位是純字串。這裡不做型別窄化，交由 catalog 解讀。
+ * A raw preset value is always a string or an array of strings (arrays for multi-nozzle printers);
+ * a few metadata fields are plain strings. No type narrowing happens here; the catalog interprets values.
  */
 export type PresetValue = string | readonly string[];
 
 export type PresetRecord = Readonly<Record<string, PresetValue>>;
 
-/** preset 索引項目：只有身分與位置，不含內容。 */
+/** A preset index entry: identity and location only, no contents. */
 export type PresetIndexEntry = {
   readonly name: string;
   readonly kind: PresetKind;
   readonly origin: PresetOrigin;
-  /** 相對於資料根的路徑，僅供人類定位與除錯。 */
+  /** Path relative to the data root, only for humans to locate the file and debug. */
   readonly relativePath: string;
-  /** 是否可在 UI 直接選用；`false` 代表它只是繼承用的中間層。 */
+  /** Whether it can be selected directly in the UI; `false` means it is only an intermediate layer for inheritance. */
   readonly instantiable: boolean;
-  /** 直接父層 preset 名稱。 */
+  /** Name of the direct parent preset. */
   readonly inherits?: string;
 };
 
-/** 展平後的 preset：繼承鏈已解析，不再帶 `inherits`。 */
+/** A flattened preset: the inheritance chain has been resolved and `inherits` is gone. */
 export type ResolvedPreset = {
   readonly name: string;
   readonly kind: PresetKind;
   readonly origin: PresetOrigin;
-  /** 由葉節點到根的繼承鏈，第一個元素就是 `name`。 */
+  /** Inheritance chain from the leaf preset to the root; the first element is `name`. */
   readonly inheritanceChain: readonly string[];
-  /** 展平後的完整設定。 */
+  /** The complete flattened settings. */
   readonly settings: PresetRecord;
-  /** 每個 key 實際來自繼承鏈的哪一層，用來解釋「這個值哪來的」。 */
+  /** Which layer of the inheritance chain each key actually came from, used to explain "where did this value come from". */
   readonly provenance: Readonly<Record<string, string>>;
 };
 
-/** 使用者要求覆寫的參數。 */
+/** Parameters the user asked to override. */
 export type ParameterOverrides = Readonly<Record<string, PresetValue>>;
 
-/** 一次切片請求。 */
+/** A single slicing request. */
 export type SliceRequest = {
-  /** 待切片的模型檔絕對路徑（.stl／.3mf／.obj／.step）。 */
+  /** Absolute path of the model file to slice (.stl / .3mf / .obj / .step). */
   readonly modelPath: string;
   readonly machinePreset: string;
   readonly processPreset: string;
   readonly filamentPresets: readonly string[];
   readonly overrides: ParameterOverrides;
-  /** 幾何擺放，直接對應 CLI flag。 */
+  /** Geometric placement, mapped directly to CLI flags. */
   readonly placement?: SlicePlacement;
-  /** 要切的盤號；0 代表全部。 */
+  /** Plate number to slice; 0 means all plates. */
   readonly plate?: number;
 };
 
@@ -73,25 +74,25 @@ export type SlicePlacement = {
   readonly rotateY?: number;
 };
 
-/** 從切片產物讀回來的客觀統計，全部來自 G-code 標頭，不是估算。 */
+/** Objective statistics read back from the slicing output, all taken from the G-code header, not estimated. */
 export type SliceStats = {
   readonly layerCount: number;
   readonly maxZHeight: number;
   readonly layerHeight: number;
-  /** 秒。來自 `; model printing time`。 */
+  /** Seconds. From `; model printing time`. */
   readonly modelPrintTimeSeconds?: number;
   readonly totalEstimatedTimeSeconds?: number;
-  /** 整盤合計，含換色沖洗與擦料塔。多色時是各色加總。 */
+  /** Total for the whole plate, including filament-change flushing and the prime tower. For multi-colour prints, the sum of all colours. */
   readonly filamentGrams?: number;
-  /** 整盤合計，多色時是各色加總。 */
+  /** Total for the whole plate; for multi-colour prints, the sum of all colours. */
   readonly filamentLengthMm?: number;
   readonly filamentCostCny?: number;
-  /** 多色時每一色的用量；單色不回傳。 */
+  /** Per-colour usage for multi-colour prints; not returned for single-colour prints. */
   readonly filamentBreakdown?: readonly FilamentUsage[];
 };
 
 export type FilamentUsage = {
-  /** 耗材槽編號（1 起算），取自 G-code 標頭的 `; filament:`。 */
+  /** Filament slot number (1-based), taken from `; filament:` in the G-code header. */
   readonly filament?: number;
   readonly grams?: number;
   readonly lengthMm?: number;
@@ -101,9 +102,9 @@ export type SliceOutcome = {
   readonly ok: true;
   readonly outputPath: string;
   readonly stats: SliceStats;
-  /** 切片實際採用的完整設定，從產物 3MF 讀回，是唯一可信的事後真相。 */
+  /** The complete settings slicing actually used, read back from the output 3MF; the only trustworthy after-the-fact truth. */
   readonly appliedSettings: PresetRecord;
-  /** 這次覆寫是否真的落到產物上；任何一項落空都會列在這裡。 */
+  /** Whether this run's overrides actually reached the output; any override that was not honoured is listed here. */
   readonly overrideAudit: readonly OverrideAuditEntry[];
   readonly warnings: readonly string[];
 };
@@ -123,13 +124,13 @@ export type SliceFailure = {
 
 export type SliceResult = SliceOutcome | SliceFailure;
 
-/** 模型幾何摘要。 */
+/** Summary of the model geometry. */
 export type ModelInspection = {
   readonly triangleCount: number;
   readonly boundingBox: BoundingBox;
   readonly volumeMm3: number;
   readonly surfaceAreaMm2: number;
-  /** 每條邊都恰好被兩個三角形共用時為 true。 */
+  /** True when every edge is shared by exactly two triangles. */
   readonly closed: boolean;
   readonly degenerateTriangles: number;
   readonly openEdges: number;
@@ -143,13 +144,13 @@ export type BoundingBox = {
 
 export type Vec3 = { readonly x: number; readonly y: number; readonly z: number };
 
-/** 可列印性檢查的單一發現。 */
+/** A single finding from the printability check. */
 export type PrintabilityFinding = {
   readonly code: PrintabilityCode;
   readonly severity: 'blocker' | 'warning' | 'note';
   readonly summary: string;
   readonly detail: string;
-  /** 建議調整的參數 key；空陣列代表這題不是靠參數解的。 */
+  /** Parameter keys suggested for adjustment; an empty array means this is not something parameters can fix. */
   readonly relatedParameters: readonly string[];
 };
 
@@ -168,9 +169,9 @@ export type PrintabilityReport = {
   readonly inspection: ModelInspection;
   readonly buildVolume: Vec3;
   readonly fitsBuildVolume: boolean;
-  /** 需要支撐的三角形面積佔比（0–1）。 */
+  /** Share of triangle area that needs support (0–1). */
   readonly overhangAreaRatio: number;
-  /** 沒有接到列印板的實體；空陣列代表每一塊都站得住。 */
+  /** Bodies that do not reach the build plate; an empty array means every body stands on its own. */
   readonly floatingBodies: readonly {
     readonly name: string;
     readonly partNames: readonly string[];

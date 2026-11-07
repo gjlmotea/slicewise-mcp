@@ -13,21 +13,26 @@ import {
 import { surfacesTouch } from './contact.js';
 
 /**
- * 零件之間的間隙量測。
+ * Clearance measurement between parts.
  *
- * 為什麼需要這個：列印即組裝（print-in-place）的模型 —— 齒輪、鉸鏈、球窩關節 ——
- * 能不能動，取決於相鄰零件之間留了多少空隙，以及那個空隙有沒有大過印表機的解析能力。
- * 這件事在切片器裡看不到，在可列印性分析裡也看不到（那些只看單一實體的形狀），
- * 但它決定了成品是「會轉的機構」還是「一坨黏死的塑膠」。
+ * Why this exists: whether a print-in-place model (gears, hinges, ball joints) can move
+ * depends on how much clearance is left between neighbouring parts, and on whether that
+ * clearance is larger than what the printer can resolve. The slicer does not show this,
+ * and neither does printability analysis (which only looks at the shape of a single solid),
+ * yet it decides whether the result is "a mechanism that turns" or "a lump of fused plastic".
  *
- * 兩個刻意的設計決定：
+ * Two deliberate design decisions:
  *
- * 1. **零件不等於實體。** Bambu 把「同一顆實體依高度切成多段換色」也存成獨立的 part。
- *    直接拿 part 兩兩比對，會把同一顆齒輪的上下兩段報成「間隙 0，會黏死」——
- *    那是廢話，它們本來就是同一塊。所以先把互相接觸的 part 併成剛體，再比對剛體。
+ * 1. **A part is not a solid.** Bambu also stores "one solid cut into height bands for a
+ *    colour change" as separate parts. Comparing parts pairwise directly would report the
+ *    upper and lower halves of the same gear as "clearance 0, will fuse", which is
+ *    meaningless: they are the same piece to begin with. So parts that touch each other are
+ *    first merged into rigid bodies, and rigid bodies are compared instead.
  *
- * 2. **量的是最小距離，不是中心距。** 齒輪的中心距算得出來，但真正會黏在一起的是
- *    齒面最接近的那一點。只有實際掃過表面才知道那一點在哪、離多遠。
+ * 2. **What is measured is the minimum distance, not the centre distance.** The centre
+ *    distance of two gears is easy to compute, but what actually fuses is the point where the
+ *    tooth flanks come closest. Only sweeping the actual surfaces tells you where that point
+ *    is and how far apart it is.
  */
 
 export type ClosestApproach = {
@@ -36,9 +41,9 @@ export type ClosestApproach = {
 };
 
 export type MinDistanceOptions = {
-  /** 取樣間距上限，mm。越小越準也越慢。 */
+  /** Upper bound on sampling spacing, in mm. Smaller is more accurate and slower. */
   readonly samplingMm: number;
-  /** 單次比對的取樣點總數上限，避免大模型跑不完。 */
+  /** Cap on the total number of sample points per comparison, so large models still finish. */
   readonly maxSamples: number;
 };
 
@@ -47,7 +52,10 @@ export const DEFAULT_MIN_DISTANCE_OPTIONS: MinDistanceOptions = {
   maxSamples: 250_000,
 };
 
-/** 在三角形上鋪均勻取樣點（含三個頂點）。用固定的重心座標格線，結果可重現。 */
+/**
+ * Lay uniform sample points over a triangle (including its three vertices). Uses a fixed
+ * barycentric grid so results are reproducible.
+ */
 function samplePoints(t: Triangle, spacing: number, maxSteps: number): readonly Vec3[] {
   const points: Vec3[] = [t.a, t.b, t.c];
   const ab = subtract(t.b, t.a);
@@ -67,11 +75,12 @@ function samplePoints(t: Triangle, spacing: number, maxSteps: number): readonly 
 }
 
 /**
- * 先求一個有限的上界。
+ * First obtain a finite upper bound.
  *
- * 這一步不是最佳化，是正確性的前提：網格查詢需要有限的搜尋半徑，
- * 否則會一圈一圈往外擴到天邊，索引形同虛設。用抽樣的三角形互相比對，
- * 幾毫秒就能拿到一個夠用的上界。
+ * This step is not an optimisation, it is a precondition for correctness: spatial queries
+ * need a finite search radius, otherwise they keep expanding ring after ring towards
+ * infinity and the index becomes useless. Comparing a sample of triangles against each other
+ * yields a good-enough upper bound in a few milliseconds.
  */
 function seedUpperBound(a: TriangleSet, b: TriangleSet): number {
   const stride = (set: TriangleSet): number => Math.max(1, Math.floor(set.triangles.length / 120));
@@ -91,19 +100,22 @@ function seedUpperBound(a: TriangleSet, b: TriangleSet): number {
   }
 
   if (Number.isFinite(best)) return best;
-  // 兩邊都空或抽樣沒抽到東西時，退回用外框對角線當上界。
+  // When both sides are empty or sampling picked nothing, fall back to the bounding-box
+  // diagonals as the upper bound.
   const diagonal = (set: TriangleSet): number =>
     Math.sqrt(set.box.size.x ** 2 + set.box.size.y ** 2 + set.box.size.z ** 2);
   return diagonal(a) + diagonal(b) + boxDistance(a.box, b.box) + 1;
 }
 
 /**
- * 兩組三角形之間的最小距離。
+ * Minimum distance between two triangle sets.
  *
- * 三階段：抽樣求上界 → 頂點掃描收斂 → 對「離對方夠近」的三角形做面取樣細算。
- * 兩個方向都跑，因為最近點可能落在其中一邊的面內部而不是任何頂點上。
+ * Three stages: sample for an upper bound → vertex sweep to converge → surface sampling
+ * refinement on triangles that are "close enough to the other side". Both directions are run,
+ * because the closest point may lie inside a face on one side rather than on any vertex.
  *
- * 「有沒有接觸」不要用這支來問 —— 那是 contact.ts 的 surfacesTouch，便宜兩個數量級。
+ * Do not use this to ask "do they touch?"; that is `surfacesTouch` in contact.ts, two orders
+ * of magnitude cheaper.
  */
 export function minDistanceBetweenSets(
   a: TriangleSet,
@@ -112,9 +124,10 @@ export function minDistanceBetweenSets(
 ): ClosestApproach | undefined {
   if (a.triangles.length === 0 || b.triangles.length === 0) return undefined;
 
-  // 上界要「嚴格大於」真答案。網格查詢只回報比上界更近的點，
-  // 如果上界剛好等於真答案（抽樣正好抽中最近的那對頂點就會這樣），
-  // 查詢會一路回 undefined，最後什麼都沒找到。加一點餘裕把等號讓開。
+  // The upper bound must be *strictly greater* than the true answer. Spatial queries only
+  // report points closer than the bound; if the bound happens to equal the true answer (which
+  // happens when sampling picks exactly the closest pair of vertices), every query returns
+  // undefined and nothing is ever found. Add a little slack to step off the equality.
   const seed = seedUpperBound(a, b);
   let best = seed + Math.max(1e-6, seed * 1e-9);
   let bestPoint: Vec3 | undefined;
@@ -122,25 +135,28 @@ export function minDistanceBetweenSets(
   const sweep = (source: TriangleSet, target: TriangleSet, spacing: number | undefined): void => {
     let budget = options.maxSamples;
 
-    // 由近而遠處理，這是分支限界能不能生效的關鍵。
+    // Processing near-to-far is what makes branch-and-bound effective.
     //
-    // 照檔案順序掃的話，前面幾千個三角形可能都離對方很遠，best 一直降不下來，
-    // 而 best 大就代表網格要往外搜很多圈 —— 每次查詢都貴。先排序，第一個處理的
-    // 就是最可能最近的那個，best 立刻收斂到接近真值，後面全部被剪掉，
-    // 而且因為已排序，一旦下界超過 best 就可以整個 break 掉，不必再看剩下的。
+    // Sweeping in file order, the first few thousand triangles may all be far from the other
+    // side, so `best` never comes down, and a large `best` means the spatial query has to
+    // search many rings outward, making every query expensive. Sort first, and the first
+    // triangle processed is the most likely closest one: `best` immediately converges near
+    // the true value and everything after it gets pruned. And because it is sorted, once the
+    // lower bound exceeds `best` the whole loop can break without looking at the rest.
     const count = source.triangles.length;
     const lower = new Float64Array(count);
     for (let index = 0; index < count; index += 1) {
       lower[index] = source.lowerBoundToBox(index, target.box);
     }
-    // 不要整個排序。
+    // Do not sort the whole thing.
     //
-    // 排序看起來很自然（由近而遠處理，分支限界最漂亮），但這條路徑每組零件比對要走四次、
-    // 而齒圈有三萬五千個三角形 —— 一次比對就是上百萬次比較函式呼叫，實測整包 57 秒有一半在這裡。
+    // Sorting looks natural (near-to-far is the cleanest branch-and-bound), but this path runs
+    // four times per pair of parts, and the ring gear has 35,000 triangles: one comparison is
+    // over a million comparator calls. Measured, half of the full 57-second run was spent here.
     //
-    // 真正需要的只是「先處理最近的少數幾個，把 best 壓下來」。壓下來之後，
-    // 剩下的全部會被 `lower >= best` 這個 O(1) 判斷擋掉，順序就不重要了。
-    // 選出最小的 K 個是線性的，不需要 O(n log n)。
+    // All that is really needed is "process the closest few first to push `best` down". Once
+    // it is down, everything else is rejected by the O(1) `lower >= best` check and order no
+    // longer matters. Selecting the smallest K is linear; no O(n log n) needed.
     const SEED_COUNT = 48;
     const seedIndices: number[] = [];
     for (let index = 0; index < count; index += 1) {
@@ -177,21 +193,25 @@ export function minDistanceBetweenSets(
       const triangle = source.triangles[index];
       if (triangle === undefined) continue;
       if (budget <= 0) break;
-      // 只有前 SEED_COUNT 個是排序過的，後面是原順序，所以這裡是 continue 不是 break。
+      // Only the first SEED_COUNT entries are sorted; the rest are in original order, so this
+      // is `continue`, not `break`.
       if ((lower[index] ?? 0) >= best) continue;
 
       let points: readonly Vec3[];
       if (spacing === undefined) {
         points = [triangle.a, triangle.b, triangle.c];
       } else {
-        // 細算階段的閘門。
+        // Gate for the refinement stage.
         //
-        // 只靠上面那道 AABB 剪枝是不夠的：對方的外框可能很大（例如整個外齒圈），
-        // 「離外框很近」不代表「離表面很近」。沒有這道閘，齒圈上成千上萬個
-        // 其實離行星輪很遠的三角形都會被密集取樣，時間就是這樣燒掉的。
+        // The AABB pruning above is not enough on its own: the other side's bounding box can be
+        // huge (for example a whole ring gear), and "close to the bounding box" does not mean
+        // "close to the surface". Without this gate, thousands of ring-gear triangles that are
+        // actually far from the planet gear all get densely sampled; that is where the time
+        // went.
         //
-        // 先用重心問一次：連「重心到對方表面」都超過 best 加上這個三角形自己的半徑，
-        // 它上面就不可能有任何一點比 best 更近。一次查詢換掉幾十次取樣。
+        // Ask once with the centroid first: if even "centroid to the other surface" exceeds
+        // `best` plus this triangle's own radius, no point on the triangle can be closer than
+        // `best`. One query replaces dozens of samples.
         const centroid = {
           x: (triangle.a.x + triangle.b.x + triangle.c.x) / 3,
           y: (triangle.a.y + triangle.b.y + triangle.c.y) / 3,
@@ -211,7 +231,8 @@ export function minDistanceBetweenSets(
         const hit = target.nearestWithin(point, best);
         if (hit === undefined) continue;
         best = hit.distance;
-        // 回報位置取兩個最近點的中點，落在間隙正中間，比較好對照。
+        // Report the midpoint of the two closest points: it sits in the middle of the gap,
+        // which is easier to locate on the model.
         bestPoint = {
           x: (point.x + hit.point.x) / 2,
           y: (point.y + hit.point.y) / 2,
@@ -224,14 +245,18 @@ export function minDistanceBetweenSets(
   sweep(a, b, undefined);
   sweep(b, a, undefined);
 
-  // 細算不能因為「只是分群」就跳過。
+  // Refinement cannot be skipped just because the caller is "only grouping".
   //
-  // 一度想省掉：分群只問是非題，貼合的面總會有頂點落在對方面上。
-  // 但互相穿透的零件不是這樣 —— 一根柱子插進板子裡，兩邊的頂點可能都離對方表面好幾 mm，
-  // 真正距離 0 的地方是柱子側面與板子頂面「交叉」的那條線，只有面取樣掃得到。
-  // 跳過細算就會把插銷、嵌入的裝飾件判成獨立零件，然後報一個假的「間隙」。
+  // It was tempting to drop it: grouping only asks a yes/no question, and coincident faces
+  // always have some vertex lying on the other face. Interpenetrating parts are different: a
+  // post pushed into a plate can have every vertex on both sides several mm from the other
+  // surface, and the place where the distance is truly 0 is the line where the post's side
+  // *crosses* the plate's top face, which only surface sampling reaches. Skipping refinement
+  // would classify pins and embedded decorations as separate parts and then report a fake
+  // "clearance".
 
-  // 面取樣細算。間距取「目前最佳解的一半」與設定值的較小者，但不小於 0.02 mm。
+  // Surface sampling refinement. Spacing is the smaller of "half the current best" and the
+  // configured value, but not below 0.02 mm.
   const refine = Math.max(0.02, Math.min(options.samplingMm, best / 2));
   sweep(a, b, refine);
   sweep(b, a, refine);
@@ -240,7 +265,7 @@ export function minDistanceBetweenSets(
   return { distanceMm: best, at: bestPoint };
 }
 
-/** 便利包裝，讓只有三角形陣列的呼叫端（例如測試）不必自己建索引。 */
+/** Convenience wrapper so callers holding only triangle arrays (e.g. tests) need not build the index. */
 export function minDistanceBetween(
   a: readonly Triangle[],
   b: readonly Triangle[],
@@ -249,12 +274,12 @@ export function minDistanceBetween(
   return minDistanceBetweenSets(new TriangleSet(a), new TriangleSet(b), options);
 }
 
-// ── 剛體分群 ──────────────────────────────────────────────────────────────
+// ── Rigid-body grouping ───────────────────────────────────────────────────
 
 export type RigidBody = {
   readonly index: number;
   readonly name: string;
-  /** 併進這個剛體的 3MF 零件名稱。 */
+  /** Names of the 3MF parts merged into this rigid body. */
   readonly partNames: readonly string[];
   readonly extruders: readonly string[];
   readonly triangleCount: number;
@@ -263,11 +288,13 @@ export type RigidBody = {
 };
 
 /**
- * 把互相接觸的零件併成剛體。
+ * Merge parts that touch each other into rigid bodies.
  *
- * 判準是「最小距離小於 fuseEpsilon」。同一顆實體被切成的換色段落是完全貼合的（距離 0），
- * 嵌在環上的裝飾球也是（互相穿透，距離 0），而真正分離的機構件之間隔著設計公差，
- * 不會被誤併 —— 這是行星齒輪陀螺上實測 0.09 mm 的那個間隙。
+ * The criterion is "minimum distance below fuseEpsilon". Colour-change bands cut from one
+ * solid are exactly coincident (distance 0), and so are decorative balls embedded in a ring
+ * (interpenetrating, distance 0), while genuinely separate mechanism parts are separated by a
+ * design tolerance and are not merged by mistake; that is the 0.09 mm clearance measured on
+ * the planetary-gear fidget spinner.
  */
 export function groupRigidBodies(parts: readonly MeshPart[], fuseEpsilon = 1e-3): readonly RigidBody[] {
   const sets = parts.map((part) => new TriangleSet(part.triangles));
@@ -290,14 +317,17 @@ export function groupRigidBodies(parts: readonly MeshPart[], fuseEpsilon = 1e-3)
       const setI = sets[i];
       const setJ = sets[j];
       if (setI === undefined || setJ === undefined) continue;
-      // AABB 都碰不到就不可能接觸。這一行擋掉絕大多數配對。
+      // If the AABBs do not even meet, they cannot touch. This line rejects the vast majority
+      // of pairs.
       if (boxDistance(setI.box, setJ.box) > fuseEpsilon) continue;
 
-      // 用專用的接觸判定，不要借用最小距離。
+      // Use the dedicated contact test; do not borrow the minimum distance.
       //
-      // 借用的話等於為了一個是非題去算精確值：搜尋半徑是「目前最佳解」（可能好幾 mm），
-      // 網格得往外搜很多圈。接觸判定的半徑固定是 fuseEpsilon（1 微米量級），
-      // 幾乎每次查詢都只看一格。實測這一個改動把分群從數分鐘壓到不到一秒。
+      // Borrowing it would compute an exact value to answer a yes/no question: the search
+      // radius is "the current best" (possibly several mm), so the spatial query has to search
+      // far outward. The contact test's radius is fixed at fuseEpsilon (on the order of a
+      // micrometre), so almost every query looks at a single cell. Measured, this one change
+      // cut grouping from several minutes to under a second.
       if (surfacesTouch(setI, setJ, fuseEpsilon)) union(i, j);
     }
   }
@@ -343,7 +373,7 @@ export function groupRigidBodies(parts: readonly MeshPart[], fuseEpsilon = 1e-3)
   return bodies;
 }
 
-// ── 報告 ──────────────────────────────────────────────────────────────────
+// ── Report ────────────────────────────────────────────────────────────────
 
 export type ClearanceVerdict = 'will-fuse' | 'marginal' | 'adequate';
 
@@ -354,9 +384,10 @@ export type ClearancePair = {
   readonly at: Vec3;
   readonly verdict: ClearanceVerdict;
   /**
-   * 這個介面上，是誰包住誰。
-   * `a-encloses-b` 代表 a 那一側是「孔」，吃 xy_hole_compensation；
-   * 兩邊都不是包覆關係時是 `neither`，兩側都吃 xy_contour_compensation。
+   * Which side encloses which at this interface.
+   * `a-encloses-b` means the a side is a "hole" and is governed by xy_hole_compensation;
+   * when neither encloses the other it is `neither`, and both sides are governed by
+   * xy_contour_compensation.
    */
   readonly enclosure: 'a-encloses-b' | 'b-encloses-a' | 'neither';
 };
@@ -385,11 +416,14 @@ export type ClearanceReport = {
 };
 
 export type ClearanceOptions = {
-  /** 這台機器／材料能可靠印出的最小間隙。0.4 噴頭 PLA 的實務下限約 0.15–0.20 mm。 */
+  /**
+   * Smallest clearance this machine/material can print reliably. The practical lower limit
+   * for PLA on a 0.4 nozzle is about 0.15–0.20 mm.
+   */
   readonly minimumClearanceMm: number;
-  /** 超過這個距離的配對不列入報告，避免無關的零件洗版。 */
+  /** Pairs farther apart than this are left out of the report, so unrelated parts do not flood it. */
   readonly reportThresholdMm: number;
-  /** 小於這個距離就視為同一顆實體。 */
+  /** Anything closer than this is treated as the same solid. */
   readonly fuseEpsilonMm: number;
 };
 
@@ -446,8 +480,8 @@ export function analyseClearance(
 
   if (bodies.length <= 1) {
     findings.push(
-      '只找到一顆實體，沒有可以互相移動的零件。這個模型不是列印即組裝的機構，' +
-        '或是所有零件在設計上就已經連在一起。',
+      'Only one solid was found, so there are no parts that can move relative to each other. ' +
+        'Either this model is not a print-in-place mechanism, or all of its parts are joined by design.',
     );
   }
 
@@ -456,24 +490,32 @@ export function analyseClearance(
 
   if (fusing.length > 0) {
     findings.push(
-      `${fusing.length} 組介面的間隙小於 ${options.minimumClearanceMm} mm，` +
-        '照原尺寸列印會熔在一起。硬扳可以分開，但齒面會撕裂，動作不會順。',
+      `${fusing.length} interface(s) have a clearance below ${options.minimumClearanceMm} mm ` +
+        'and will fuse if printed at the original size. Forcing them apart is possible, but the ' +
+        'tooth flanks will tear and the motion will not be smooth.',
     );
   }
   if (marginal.length > 0) {
-    findings.push(`${marginal.length} 組介面在臨界區間，能不能動取決於首層壓扁程度與流量校正。`);
+    findings.push(
+      `${marginal.length} interface(s) are in the marginal range; whether they move depends on ` +
+        'how much the first layer is squished and on flow calibration.',
+    );
   }
   if (pairs.length > 0 && fusing.length === 0 && marginal.length === 0) {
-    findings.push('所有介面的間隙都在可靠區間，不需要為了轉動而調整補償。');
+    findings.push(
+      'Every interface has a clearance in the reliable range; no compensation is needed for the parts to turn.',
+    );
   }
 
   let recommendation: ClearanceReport['recommendation'];
   if (tightest !== undefined && tightest < options.minimumClearanceMm) {
-    // 每一側各縮／擴這麼多，兩側加起來剛好補到門檻。量化到 0.005 mm 一階，方便直接填進 Studio。
+    // Shrink/grow each side by this much so the two sides together just reach the threshold.
+    // Quantised to 0.005 mm steps so it can be typed straight into Studio.
     //
-    // 那個 1e-9 不是裝飾：0.15 - 0.09 在浮點裡是 0.06000000000000005，
-    // 乘 200 得 6.000000000000005，ceil 會進位到 7，於是本來剛好的 0.030 被吹成 0.035。
-    // 建議值憑空多讓 0.005 mm，齒厚就白白被吃掉。
+    // The 1e-9 is not decoration: 0.15 - 0.09 in floating point is 0.06000000000000005, times
+    // 200 is 6.000000000000005, and ceil rounds that up to 7, inflating an exact 0.030 to
+    // 0.035. The recommendation would give away an extra 0.005 mm for nothing, eating into
+    // tooth thickness.
     const perSide = Math.ceil(((options.minimumClearanceMm - tightest) / 2) * 200 - 1e-9) / 200;
     const hasEnclosure = pairs.some(
       (pair) => pair.verdict === 'will-fuse' && pair.enclosure !== 'neither',
@@ -482,14 +524,14 @@ export function analyseClearance(
       xy_contour_compensation: `-${perSide.toFixed(3)}`,
       xy_hole_compensation: hasEnclosure ? `${perSide.toFixed(3)}` : '0',
       rationale:
-        `最緊的介面是 ${tightest.toFixed(3)} mm，目標 ${options.minimumClearanceMm} mm，` +
-        `兩側各讓 ${perSide.toFixed(3)} mm 剛好補上。` +
+        `The tightest interface is ${tightest.toFixed(3)} mm against a target of ${options.minimumClearanceMm} mm; ` +
+        `giving up ${perSide.toFixed(3)} mm on each side closes the difference exactly.` +
         (hasEnclosure
-          ? '注意有零件被另一個零件包住：被包住那一側的面在切片器眼中是「孔」，' +
-            '吃 xy_hole_compensation（正值擴大），不是 xy_contour_compensation。' +
-            '只調其中一個，間隙只會長一半。'
-          : '沒有包覆關係，兩側都是外輪廓，只要調 xy_contour_compensation。') +
-        ' 另外務必確認 detect_thin_wall 是關的 —— 開著切片器會試圖把這些縫填起來。',
+          ? ' Note that one part is enclosed by another: to the slicer, the enclosing side of that ' +
+            'interface is a "hole", governed by xy_hole_compensation (positive values enlarge it), ' +
+            'not xy_contour_compensation. Adjust only one of them and the clearance grows by only half.'
+          : ' There is no enclosure, so both sides are outer contours; only xy_contour_compensation needs adjusting.') +
+        ' Also make sure detect_thin_wall is off; with it on, the slicer will try to fill these gaps.',
     };
   }
 

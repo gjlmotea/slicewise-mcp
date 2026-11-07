@@ -2,17 +2,20 @@ import type { PrintabilityCode } from '../contracts.js';
 import type { RemedyDirection } from './diagnostics.js';
 
 /**
- * 目標導向的參數規劃。
+ * Goal-driven parameter planning.
  *
- * `diagnostics.ts` 是**事後**的：東西印壞了，從現象回推該調什麼。
- * 這裡是**事前**的：還沒印，先講清楚你要什麼，據此排出一組調整。
+ * `diagnostics.ts` works **after the fact**: something printed badly, and we reason back from the
+ * symptom to what should be changed. This module works **before the fact**: nothing has been
+ * printed yet, the caller states what they want, and we lay out a set of adjustments from that.
  *
- * 兩者刻意分開，因為思路相反 —— 診斷要收斂到單一成因，規劃要在互相衝突的
- * 目標之間取捨。同一個參數在不同目標下的方向可能完全相反：
- * 求快要把 `fan_max_speed` 留著全開好讓層時間縮短，求 ABS 不翹卻要把它關掉。
+ * The two are kept apart on purpose because they think in opposite directions — diagnosis has to
+ * converge on a single cause, while planning has to trade off goals that conflict with each other.
+ * The same parameter can move in completely opposite directions under different goals: going fast
+ * wants `fan_max_speed` left at full so layer times stay short, while keeping ABS from warping
+ * wants it turned off.
  */
 
-/** 這個調整是在對付什麼。輸出時依此分組，比一長串平鋪的參數清單有用得多。 */
+/** What an adjustment is fighting against. Output is grouped by this, which is far more useful than one long flat list of parameters. */
 export type GoalConcern =
   | 'adhesion'
   | 'collision'
@@ -22,12 +25,12 @@ export type GoalConcern =
   | 'material';
 
 export const CONCERN_LABELS: Readonly<Record<GoalConcern, string>> = {
-  adhesion: '附著與翹曲',
-  collision: '噴頭碰撞',
-  quality: '表面品質',
-  strength: '結構強度',
-  time: '列印時間',
-  material: '耗材用量',
+  adhesion: 'Adhesion and warping',
+  collision: 'Nozzle collisions',
+  quality: 'Surface quality',
+  strength: 'Structural strength',
+  time: 'Print time',
+  material: 'Filament usage',
 };
 
 export type GoalMove = {
@@ -39,7 +42,7 @@ export type GoalMove = {
   readonly cost: string;
 };
 
-/** 只在模型幾何符合條件時才加入的調整。 */
+/** An adjustment that is only added when the model geometry meets a condition. */
 export type ConditionalMove = GoalMove & {
   readonly when: PrintabilityCode;
   readonly because: string;
@@ -51,7 +54,7 @@ export type PrintGoal = {
   readonly aliases: readonly string[];
   readonly optimisesFor: string;
   readonly tradesAway: string;
-  /** 依「先做這個」排序。 */
+  /** Ordered by "do this first". */
   readonly moves: readonly GoalMove[];
   readonly conditional: readonly ConditionalMove[];
   readonly materialNotes?: Readonly<Record<string, string>>;
@@ -60,29 +63,34 @@ export type PrintGoal = {
 
 const SAFE: PrintGoal = {
   id: 'safe',
-  label: '穩妥不失敗',
-  // alias 一律至少兩個字。單字元（穩／快／強）會被否定句與無關詞誤觸 ——
-  // 「勉強」會命中 strong、「顏色不好看」會命中 surface。目標比對錯的代價是
-  // 整組參數往反方向調，所以寧可漏比對也不要誤比對。
+  label: 'Safe, no failures',
+  // Chinese aliases are always at least two characters. Single-character aliases (穩 "steady",
+  // 快 "fast", 強 "strong") get triggered by negations and unrelated words — 勉強 ("reluctantly")
+  // would match strong, and 顏色不好看 ("the colour looks bad") would match surface. Matching the
+  // wrong goal means the whole set of parameters moves the wrong way, so a missed match is
+  // preferable to a false one.
   aliases: [
     '不要失敗', '不要印壞', '避免印壞', '印壞', '印錯', '穩妥', '保守', '慢慢印',
     '慢一點', '不要翹', '翹起來', '撞到', '碰撞', '高品質',
     'safe', 'reliable', 'careful', 'no fail',
   ],
-  optimisesFor: '把失敗機率壓到最低：不翹邊、不脫落、噴頭不撞到已印的部分、表面穩定。',
-  tradesAway: '時間。這組設定會比原廠 preset 慢上不少，而且耗材略增。',
+  optimisesFor:
+    'Keep the chance of failure as low as possible: no warping, no detaching from the plate, ' +
+    'no nozzle strikes on already-printed sections, and a consistent surface.',
+  tradesAway: 'Time. These settings are noticeably slower than the stock preset and use slightly more filament.',
   moves: [
-    // ── 噴頭碰撞 ───────────────────────────────────────────────────────
-    // 這是最貴的失敗模式：撞到通常整件報廢，還可能把噴頭撞歪或把件撞飛。
+    // ── Nozzle collisions ─────────────────────────────────────────────
+    // This is the most expensive failure mode: a strike usually scraps the whole part, and can
+    // knock the nozzle out of alignment or send the part flying.
     {
       key: 'filament_z_hop',
       direction: 'increase',
       suggested: '0.4 mm',
       concern: 'collision',
       rationale:
-        '空跑時抬起噴頭，讓它不會擦過已印表面。表面若有一點點捲翹或殘料，' +
-        '沒抬升的噴頭就會直接撞上去。',
-      cost: '每次抬降都增加時間，抬起點偶爾會留下小尖點。',
+        'Lifts the nozzle during travel so it does not drag across printed surfaces. If the surface ' +
+        'has even a slight curl or a blob of leftover material, a nozzle that does not lift will hit it head-on.',
+      cost: 'Every lift and drop adds time, and lift points occasionally leave a small pip.',
     },
     {
       key: 'filament_z_hop_types',
@@ -90,18 +98,20 @@ const SAFE: PrintGoal = {
       suggested: 'Spiral Lift',
       concern: 'collision',
       rationale:
-        '螺旋抬升在移動中同時上升，不像 Normal Lift 先垂直抬再走 —— 少一次急停，' +
-        '也不會在原地拉出細絲。合法值：Auto Lift／Normal Lift／Slope Lift／Spiral Lift。',
-      cost: '幾乎沒有；路徑略長。',
+        'Spiral lift rises while it moves, unlike Normal Lift, which goes straight up first and then ' +
+        'travels — one fewer hard stop, and no thin strand pulled out on the spot. ' +
+        'Valid values: Auto Lift / Normal Lift / Slope Lift / Spiral Lift.',
+      cost: 'Almost none; the travel path is slightly longer.',
     },
     {
       key: 'enable_overhang_speed',
       direction: 'enable',
       concern: 'collision',
       rationale:
-        '懸空處來不及固化就會向上捲翹，捲起來的邊緣正好卡在下一層的噴頭路徑上 —— ' +
-        '碰撞往往是這樣開始的。分段降速讓風扇有時間把它固定住。',
-      cost: '懸空段變慢。',
+        'Overhangs that do not solidify in time curl upward, and the curled edge sits right in the ' +
+        'nozzle path for the next layer — this is how collisions usually start. Slowing down in stages ' +
+        'gives the fan time to set it in place.',
+      cost: 'Overhang sections print slower.',
     },
     {
       key: 'slow_down_layer_time',
@@ -109,82 +119,92 @@ const SAFE: PrintGoal = {
       suggested: '10 ~ 15 s',
       concern: 'collision',
       rationale:
-        '小截面層若太快完成，上一層還軟就疊上去，累積變形後同樣會頂到噴頭。' +
-        '強制每層至少花這麼久，給它時間定型。',
-      cost: '細高件或尖端多的模型會明顯變慢。',
+        'If a small cross-section layer finishes too quickly, the next layer goes onto one that is ' +
+        'still soft, and the accumulated deformation also ends up pushing into the nozzle. ' +
+        'Forcing each layer to take at least this long gives it time to set.',
+      cost: 'Tall thin parts or models with many tips get noticeably slower.',
     },
 
-    // ── 附著與翹曲 ─────────────────────────────────────────────────────
+    // ── Adhesion and warping ──────────────────────────────────────────
     {
       key: 'brim_type',
       direction: 'set',
       suggested: 'outer_only',
       concern: 'adhesion',
       rationale:
-        '在外圍加一圈裙邊，用機械方式把邊角壓住。翹曲力集中在四角，' +
-        'brim 是最直接有效的對策。合法值：auto_brim／brim_ears／outer_only／inner_only／outer_and_inner／no_brim。',
-      cost: '要拆除，邊緣會留下痕跡。',
+        'Adds a skirt of material around the outside that mechanically holds the edges down. Warping ' +
+        'force concentrates at the corners, and a brim is the most direct and effective counter. ' +
+        'Valid values: auto_brim / brim_ears / outer_only / inner_only / outer_and_inner / no_brim.',
+      cost: 'Has to be removed, and leaves marks on the edge.',
     },
     {
       key: 'brim_width',
       direction: 'increase',
       suggested: '5 mm',
       concern: 'adhesion',
-      rationale: '翹曲力隨底面積上升，brim 要夠寬才拉得住。',
-      cost: '耗材與拆除工作增加。',
+      rationale: 'Warping force grows with footprint area; the brim has to be wide enough to hold it.',
+      cost: 'More filament and more removal work.',
     },
     {
       key: 'hot_plate_temp_initial_layer',
       direction: 'increase',
       suggested: '+5 °C',
       concern: 'adhesion',
-      rationale: '首層熱床溫度高一點讓底部保持軟黏，抵抗上層冷卻時的收縮拉力。',
-      cost: '底部可能略微外擴，要一併看象腿補償。',
+      rationale:
+        'A slightly hotter bed for the first layer keeps the bottom soft and tacky, resisting the ' +
+        'shrinkage pull as the upper layers cool.',
+      cost: 'The bottom may spread slightly; check elephant\'s foot compensation alongside it.',
     },
     {
       key: 'initial_layer_speed',
       direction: 'decrease',
       suggested: '20 mm/s',
       concern: 'adhesion',
-      rationale: '首層慢慢鋪，材料才有時間熔接並壓進板材紋理。只影響一層，時間代價很小。',
-      cost: '首層時間增加，總量上可忽略。',
+      rationale:
+        'Laying the first layer down slowly gives the material time to fuse and press into the plate ' +
+        'texture. It only affects one layer, so the time cost is small.',
+      cost: 'First-layer time goes up; negligible over the whole print.',
     },
     {
       key: 'initial_layer_infill_speed',
       direction: 'decrease',
       suggested: '30 mm/s',
       concern: 'adhesion',
-      rationale: '首層外框黏住後，高速填充仍可能把小接觸面的零件扯鬆；填充也要一起降速。',
-      cost: '只增加首層時間，總量上可忽略。',
+      rationale:
+        'Even once the first-layer perimeters have stuck, high-speed infill can still tug parts with a ' +
+        'small contact area loose; slow the infill down as well.',
+      cost: 'Only adds first-layer time; negligible over the whole print.',
     },
 
-    // ── 表面品質 ───────────────────────────────────────────────────────
+    // ── Surface quality ───────────────────────────────────────────────
     {
       key: 'outer_wall_speed',
       direction: 'decrease',
-      suggested: '降到原值的 60%',
+      suggested: 'lower to 60% of the current value',
       concern: 'quality',
       rationale:
-        '外牆是唯一看得見的路徑，降速對表面的改善最直接，而它只佔總路徑一小部分，' +
-        '時間代價遠低於全面降速。',
-      cost: '時間小幅增加。',
+        'The outer wall is the only visible path, so slowing it improves the surface most directly, ' +
+        'and since it is only a small share of the total path, the time cost is far lower than slowing everything down.',
+      cost: 'A small increase in time.',
     },
     {
       key: 'default_acceleration',
       direction: 'decrease',
-      suggested: '降到原值的 50%',
+      suggested: 'lower to 50% of the current value',
       concern: 'quality',
       rationale:
-        '振紋的成因是加速度不是速度。Bambu 原廠常設到 10000 mm/s²，' +
-        '追求穩定時砍半仍然很快。',
-      cost: '所有路徑變慢，時間增加明顯。',
+        'Ringing is caused by acceleration, not speed. Bambu stock presets often set it to 10000 mm/s²; ' +
+        'halving it for reliability is still fast.',
+      cost: 'Every path slows down; a clear increase in time.',
     },
     {
       key: 'has_scarf_joint_seam',
       direction: 'enable',
       concern: 'quality',
-      rationale: '斜接縫把每層起訖做成漸變，接縫幾乎看不見，也少一個容易堆料凸起的點。',
-      cost: '略增時間。',
+      rationale:
+        'A scarf joint seam makes the start and end of each layer a gradual transition, so the seam is ' +
+        'nearly invisible and there is one less spot prone to blobbing.',
+      cost: 'Slightly more time.',
     },
     {
       key: 'reduce_crossing_wall',
@@ -192,206 +212,222 @@ const SAFE: PrintGoal = {
       suggested: '1',
       concern: 'quality',
       rationale:
-        '讓空跑路徑繞開已印的牆，而不是從上面跨過去，減少表面料瘤與刮痕。原廠 preset 預設是關的（0）。',
+        'Routes travel moves around printed walls instead of across them, reducing surface blobs and ' +
+        'scratches. Stock presets have it off by default (0).',
       cost:
-        '路徑變長，列印時間增加。別把它當防撞設定：Bambu 的 Auto Lift 跨外牆時本來就會抬升，' +
-        '實測一個碗形件開啟後，未抬升的跨外牆空跑反而從 0 次變 10 次。',
+        'Longer travel paths and more print time. Do not treat it as an anti-collision setting: ' +
+        'Bambu\'s Auto Lift already lifts when crossing outer walls, and in a test on a bowl-shaped part, ' +
+        'enabling it actually raised the number of unlifted outer-wall crossings from 0 to 10.',
     },
   ],
 
   conditional: [
     {
       when: 'small-footprint',
-      because: '底面積小的高件在列印中最容易被噴頭撞倒。',
+      because: 'Tall parts with a small footprint are the easiest for the nozzle to knock over mid-print.',
       key: 'brim_width',
       direction: 'increase',
       suggested: '8 ~ 10 mm',
       concern: 'adhesion',
-      rationale: '接觸面不足時要靠更寬的 brim 補足抓地力，否則整件會被帶走。',
-      cost: '拆除工作明顯增加。',
+      rationale:
+        'When the contact area is too small, a wider brim has to make up the grip, or the whole part gets dragged away.',
+      cost: 'Noticeably more removal work.',
     },
     {
       when: 'tall-and-narrow',
-      because: '細高件在高速移動時會晃動，上半部特別容易累積誤差並頂到噴頭。',
+      because:
+        'Tall thin parts wobble during fast moves, and the upper half is especially prone to accumulating error and pushing into the nozzle.',
       key: 'outer_wall_speed',
       direction: 'decrease',
-      suggested: '降到原值的 40%',
+      suggested: 'lower to 40% of the current value',
       concern: 'collision',
-      rationale: '晃動來自加減速的慣性；比一般情況再降一級。',
-      cost: '時間增加較多。',
+      rationale: 'The wobble comes from the inertia of acceleration and deceleration; go one step lower than usual.',
+      cost: 'A larger increase in time.',
     },
     {
       when: 'steep-overhang',
-      because: '陡峭懸空是捲翹的來源，而捲翹起來的邊緣正好卡在噴頭路徑上。',
+      because: 'Steep overhangs are where curling comes from, and a curled edge sits right in the nozzle path.',
       key: 'enable_support',
       direction: 'enable',
       concern: 'collision',
       rationale:
-        '參數調到極限仍壓不住捲翹時，就該讓支撐介入。' +
-        '先考慮換擺放方向，方向無解才開支撐。',
-      cost: '耗材、時間與後處理增加，接觸面會留疤。',
+        'When parameters pushed to their limit still cannot hold the curl down, it is time for support. ' +
+        'Try reorienting the part first, and only enable support if no orientation works.',
+      cost: 'More filament, time and post-processing, and the contact surfaces will be scarred.',
     },
     {
       when: 'large-flat-area',
-      because: '大面積底面的收縮應力集中在四角，是翹邊的典型形狀。',
+      because:
+        'Shrinkage stress in a large flat bottom concentrates at the corners — the classic shape for warping.',
       key: 'draft_shield',
       direction: 'set',
       suggested: 'enabled',
       concern: 'adhesion',
       rationale:
-        '隔絕氣流比調任何冷卻參數都有效，高收縮材料尤其明顯。' +
-        '合法值：disabled／limited／enabled。',
-      cost: '耗材與時間明顯增加。',
+        'Blocking airflow works better than tuning any cooling parameter, especially for high-shrinkage materials. ' +
+        'Valid values: disabled / limited / enabled.',
+      cost: 'Noticeably more filament and time.',
     },
   ],
 
   materialNotes: {
-    PLA: '收縮率低，翹邊多半是熱床髒污或校平問題。冷卻可以全開，對懸空與防撞都有利。',
-    PETG: '易牽絲且對熱床附著過強，brim 適度即可，過度附著反而會傷 PEI 板。',
-    ABS: '收縮率高，必須把 fan_max_speed 壓到 20% 以下並開 draft_shield；' +
-      '但降低冷卻會讓懸空更容易捲翹，防撞那組要一併加強。',
-    ASA: '同 ABS。',
-    TPU: '不要加大回抽速度；軟料本身不太翹，重點放在防撞與慢速。',
+    PLA:
+      'Low shrinkage; warping is usually a dirty bed or a levelling problem. Cooling can stay at full, ' +
+      'which helps both overhangs and collision avoidance.',
+    PETG:
+      'Strings easily and bonds too strongly to the bed; a moderate brim is enough — too much adhesion ' +
+      'can actually damage a PEI plate.',
+    ABS: 'High shrinkage: fan_max_speed must be held below 20% and draft_shield enabled; ' +
+      'but reducing cooling makes overhangs curl more easily, so strengthen the anti-collision set as well.',
+    ASA: 'Same as ABS.',
+    TPU: 'Do not raise retraction speed; flexible filament barely warps on its own, so focus on collision avoidance and slow speeds.',
   },
 
   notAParameterProblem:
-    '最有效的三件事都不是參數：熱床用異丙醇清乾淨、把模型轉到讓受力與懸空都合理的方向、' +
-    '以及第一層印的時候在旁邊看著。參數只能降低失敗率，不能取代這些。',
+    'The three most effective things are not parameters: clean the bed with isopropyl alcohol, ' +
+    'rotate the model to an orientation where loads and overhangs both make sense, ' +
+    'and stand by and watch while the first layer prints. Parameters can only lower the failure rate; they cannot replace these.',
 };
 
 const FAST: PrintGoal = {
   id: 'fast',
-  label: '省時',
+  label: 'Save time',
   aliases: ['省時', '趕時間', '越快越好', '快一點', '很快', 'fast', 'quick', 'speed'],
-  optimisesFor: '總列印時間。',
-  tradesAway: '表面品質與結構強度。',
+  optimisesFor: 'Total print time.',
+  tradesAway: 'Surface quality and structural strength.',
   moves: [
     {
       key: 'layer_height',
       direction: 'increase',
-      suggested: '0.28 mm（0.4 噴頭上限約 0.32）',
+      suggested: '0.28 mm (about 0.32 max on a 0.4 nozzle)',
       concern: 'time',
-      rationale: '層數近乎線性下降，是省時效果最大的單一參數。',
-      cost: '曲面階梯紋明顯，小特徵解析度下降。',
+      rationale: 'Layer count drops almost linearly; this is the single parameter with the biggest time savings.',
+      cost: 'Visible stair-stepping on curves, and lower resolution on small features.',
     },
     {
       key: 'sparse_infill_density',
       direction: 'decrease',
       suggested: '10%',
       concern: 'time',
-      rationale: '填充通常佔總時間最大宗，而且不影響外觀。',
-      cost: '剛性下降，頂面需要靠 top_shell_layers 補。',
+      rationale: 'Infill is usually the largest share of total time, and it does not affect appearance.',
+      cost: 'Lower stiffness; the top surface has to rely on top_shell_layers.',
     },
     {
       key: 'sparse_infill_pattern',
       direction: 'set',
       suggested: 'lightning',
       concern: 'time',
-      rationale: '只在頂面需要處長出支撐柱，省時省料最極端。',
-      cost: '幾乎沒有結構強度，只適合純外觀件。',
+      rationale: 'Only grows support columns where the top surface needs them; the most extreme time and material saver.',
+      cost: 'Almost no structural strength; only suitable for display parts.',
     },
     {
       key: 'filament_max_volumetric_speed',
       direction: 'increase',
       concern: 'time',
-      rationale: '所有速度設定都被這個值壓著，不放寬它調速度是白調。',
-      cost: '超過熱端能力就會欠擠出，必須實測驗證。',
+      rationale: 'Every speed setting is capped by this value; raising speeds without loosening it does nothing.',
+      cost: 'Going past what the hotend can melt causes under-extrusion; it must be verified by testing.',
     },
   ],
   conditional: [],
-  notAParameterProblem: '換 0.6 噴頭的省時幅度遠大於任何參數組合。',
+  notAParameterProblem: 'Switching to a 0.6 nozzle saves far more time than any combination of parameters.',
 };
 
 const STRONG: PrintGoal = {
   id: 'strong',
-  label: '受力強度',
-  aliases: ['強度', '受力', '結構件', '不要斷', '耐用', '承重', 'strong', 'strength', 'functional'],
-  optimisesFor: '機械強度，尤其抗彎與螺絲咬合。',
-  tradesAway: '時間與耗材。',
+  label: 'Load-bearing strength',
+  aliases: [
+    '強度', '受力', '結構件', '不要斷', '耐用', '承重',
+    'strong', 'strength', 'functional', 'durable',
+  ],
+  optimisesFor: 'Mechanical strength, especially bending resistance and screw holding.',
+  tradesAway: 'Time and filament.',
   moves: [
     {
       key: 'wall_loops',
       direction: 'increase',
       suggested: '4 ~ 5',
       concern: 'strength',
-      rationale: '增加牆層的強度／重量效率遠高於增加填充密度。',
-      cost: '時間與耗材增加。',
+      rationale: 'Adding walls gives far better strength per gram than adding infill density.',
+      cost: 'More time and filament.',
     },
     {
       key: 'nozzle_temperature',
       direction: 'increase',
       suggested: '+10 °C',
       concern: 'strength',
-      rationale: 'FDM 件的弱軸永遠是 Z 向層間，提高熔接深度才是真正的強度來源。',
-      cost: '牽絲與懸空下垂變嚴重。',
+      rationale:
+        'The weak axis of an FDM part is always the Z-direction layer bond; deeper fusion between layers is where strength really comes from.',
+      cost: 'Worse stringing and more sagging on overhangs.',
     },
     {
       key: 'sparse_infill_density',
       direction: 'increase',
       suggested: '30 ~ 40%',
       concern: 'strength',
-      rationale: '前兩項做完後再考慮；超過 40% 效益遞減。',
-      cost: '時間與耗材大幅增加。',
+      rationale: 'Consider this only after the first two; returns diminish above 40%.',
+      cost: 'Large increase in time and filament.',
     },
     {
       key: 'sparse_infill_pattern',
       direction: 'set',
       suggested: 'cubic',
       concern: 'strength',
-      rationale: '三維方向都有支撐，比 grid 各向均衡。',
-      cost: '略慢於 grid。',
+      rationale: 'Supports in all three directions, more evenly balanced than grid.',
+      cost: 'Slightly slower than grid.',
     },
   ],
   conditional: [],
   notAParameterProblem:
-    '受力方向與列印方向的關係比任何參數都重要。把零件轉成讓受力沿著 XY 而不是 Z，效果數倍於調參數。',
+    'How the load direction relates to the print direction matters more than any parameter. Rotating ' +
+    'the part so the load runs along XY rather than Z is several times more effective than tuning parameters.',
 };
 
 const SURFACE: PrintGoal = {
   id: 'surface',
-  label: '外觀表面',
+  label: 'Surface finish',
   aliases: ['外觀', '光滑', '質感', '表面品質', '漂亮', 'surface', 'finish', 'smooth'],
-  optimisesFor: '可見表面的平整度與一致性。',
-  tradesAway: '時間。',
+  optimisesFor: 'Flatness and consistency of the visible surfaces.',
+  tradesAway: 'Time.',
   moves: [
     {
       key: 'layer_height',
       direction: 'decrease',
       suggested: '0.12 ~ 0.16 mm',
       concern: 'quality',
-      rationale: '曲面階梯紋直接由層高決定。',
-      cost: '層數增加，時間近乎線性上升。',
+      rationale: 'Stair-stepping on curves is determined directly by layer height.',
+      cost: 'More layers; time rises almost linearly.',
     },
     {
       key: 'outer_wall_speed',
       direction: 'decrease',
-      suggested: '降到原值的 50%',
+      suggested: 'lower to 50% of the current value',
       concern: 'quality',
-      rationale: '外牆是唯一看得見的路徑，降速代價最低、回報最直接。',
-      cost: '時間小幅增加。',
+      rationale: 'The outer wall is the only visible path; slowing it is the cheapest change with the most direct payoff.',
+      cost: 'A small increase in time.',
     },
     {
       key: 'has_scarf_joint_seam',
       direction: 'enable',
       concern: 'quality',
-      rationale: '斜接縫把接縫做成漸變，是目前消除 Z 縫最有效的手段。',
-      cost: '略增時間。',
+      rationale: 'A scarf joint turns the seam into a gradual transition; currently the most effective way to hide the Z seam.',
+      cost: 'Slightly more time.',
     },
     {
       key: 'top_surface_pattern',
       direction: 'set',
       suggested: 'monotonicline',
       concern: 'quality',
-      rationale: 'Bambu Studio 的 Monotonic line 讓相鄰線條維持一致方向與順序，反光最整齊。',
-      cost: '無。',
+      rationale:
+        'Bambu Studio\'s Monotonic line keeps adjacent lines in a consistent direction and order, giving the most even reflections.',
+      cost: 'None.',
     },
     {
       key: 'ironing_type',
       direction: 'set',
       suggested: 'top',
       concern: 'quality',
-      rationale: '前面都做了還有紋路時，用熨燙收尾。',
-      cost: '每個頂面都要多掃一遍，時間增加明顯。',
+      rationale: 'If lines are still visible after everything above, finish with ironing.',
+      cost: 'Every top surface gets an extra pass; a clear increase in time.',
     },
   ],
   conditional: [],
@@ -399,41 +435,44 @@ const SURFACE: PrintGoal = {
 
 const ECONOMICAL: PrintGoal = {
   id: 'economical',
-  label: '省料',
-  aliases: ['省料', '省材料', '便宜', '輕量', 'economical', 'cheap'],
-  optimisesFor: '耗材重量。',
-  tradesAway: '強度。',
+  label: 'Save filament',
+  aliases: [
+    '省料', '省材料', '便宜', '輕量',
+    'economical', 'cheap', 'save filament', 'lightweight',
+  ],
+  optimisesFor: 'Filament weight.',
+  tradesAway: 'Strength.',
   moves: [
     {
       key: 'sparse_infill_density',
       direction: 'decrease',
       suggested: '8 ~ 10%',
       concern: 'material',
-      rationale: '填充是耗材最大的可調項。',
-      cost: '剛性下降。',
+      rationale: 'Infill is the largest adjustable consumer of filament.',
+      cost: 'Lower stiffness.',
     },
     {
       key: 'sparse_infill_pattern',
       direction: 'set',
       suggested: 'lightning',
       concern: 'material',
-      rationale: '只在需要撐住頂面處長料。',
-      cost: '幾乎無結構強度。',
+      rationale: 'Only grows material where it is needed to hold up the top surface.',
+      cost: 'Almost no structural strength.',
     },
     {
       key: 'wall_loops',
       direction: 'decrease',
       suggested: '2',
       concern: 'material',
-      rationale: '牆層佔的體積比想像中大。',
-      cost: '強度下降明顯，不適合受力件。',
+      rationale: 'Walls take up more volume than you would expect.',
+      cost: 'A clear drop in strength; not suitable for load-bearing parts.',
     },
     {
       key: 'enable_support',
       direction: 'disable',
       concern: 'material',
-      rationale: '支撐是純浪費的材料；能靠擺放角度避掉就避掉。',
-      cost: '陡峭懸空會失敗。',
+      rationale: 'Support is pure waste material; if orientation can avoid it, avoid it.',
+      cost: 'Steep overhangs will fail.',
     },
   ],
   conditional: [],
@@ -452,10 +491,11 @@ export function getGoal(id: string): PrintGoal | undefined {
 }
 
 /**
- * 以自由文字比對目標。
+ * Match a goal against free text.
  *
- * 與 `matchSymptoms` 同樣拒絕模糊猜測：比對不到就回空，讓呼叫端從清單裡挑。
- * 目標猜錯的代價比症狀猜錯更大 —— 會整組往反方向調。
+ * Like `matchSymptoms`, this refuses to guess on fuzzy input: if nothing matches it returns
+ * nothing, and the caller picks from the list. Guessing the wrong goal costs more than guessing
+ * the wrong symptom — the whole set of adjustments moves in the opposite direction.
  */
 export function matchGoal(text: string): PrintGoal | undefined {
   const haystack = text.toLowerCase();
@@ -470,7 +510,7 @@ export function matchGoal(text: string): PrintGoal | undefined {
   return best?.goal;
 }
 
-/** 依模型的可列印性發現挑出該追加的條件式調整。 */
+/** Pick the conditional adjustments to add, based on the model's printability findings. */
 export function applicableConditional(
   goal: PrintGoal,
   findingCodes: readonly PrintabilityCode[],

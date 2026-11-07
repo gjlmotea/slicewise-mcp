@@ -1,11 +1,11 @@
 import { describeParameter } from './catalog.js';
 
 /**
- * 症狀導向的參數診斷。
+ * Symptom-driven parameter diagnosis.
  *
- * 使用者不會說「請把 elefant_foot_compensation 調到 0.15」，會說「底部一圈胖出來」。
- * 這份表把可觀察的失敗現象對應到有序的處置建議：先試最有效、最低代價的，
- * 而不是一次把十個參數全動了讓人無法歸因。
+ * Users don't say "set elefant_foot_compensation to 0.15"; they say "the bottom bulges out all the way round".
+ * This table maps observable failures to an ordered list of remedies: try the most effective, lowest-cost
+ * change first, instead of changing ten parameters at once so that nobody can tell which one helped.
  */
 
 export type RemedyDirection = 'increase' | 'decrease' | 'set' | 'enable' | 'disable';
@@ -13,12 +13,12 @@ export type RemedyDirection = 'increase' | 'decrease' | 'set' | 'enable' | 'disa
 export type Remedy = {
   readonly key: string;
   readonly direction: RemedyDirection;
-  /** 建議值；`set` 一定要給，其餘為建議落點。 */
+  /** Suggested value; required for `set`, otherwise a suggested target. */
   readonly suggested?: string;
-  /** 為什麼這樣調。 */
+  /** Why this change helps. */
   readonly rationale: string;
   /**
-   * 這一步的代價。沒有免費的參數調整，把代價講出來使用者才能決定要不要接受。
+   * What this step costs. No parameter change is free; stating the cost lets the user decide whether to accept it.
    */
   readonly cost: string;
 };
@@ -26,111 +26,141 @@ export type Remedy = {
 export type Symptom = {
   readonly id: string;
   readonly label: string;
-  /** 用來比對自由文字輸入的關鍵詞，中英混合。 */
+  /** Keywords used to match free-text input, in both Chinese and English. */
   readonly aliases: readonly string[];
   readonly mechanism: string;
-  /** 依「先試這個」排序。 */
+  /** Ordered so that the remedy to try first comes first. */
   readonly remedies: readonly Remedy[];
-  /** 材料相關的補充。 */
+  /** Material-specific notes. */
   readonly materialNotes?: Readonly<Record<string, string>>;
-  /** 這個症狀不是參數能解的部分。誠實講出來比硬給參數好。 */
+  /** The part of this symptom that parameters cannot fix. Saying so honestly beats forcing a parameter answer. */
   readonly notAParameterProblem?: string;
 };
 
 const SYMPTOMS: readonly Symptom[] = [
   {
     id: 'warping',
-    label: '翹邊／邊角翹起',
-    aliases: ['翹邊', '翹曲', '邊角翹', '捲邊', 'warp', 'warping', 'curling', 'lifting'],
+    label: 'Warping / corners lifting',
+    aliases: [
+      '翹邊',
+      '翹曲',
+      '邊角翹',
+      '捲邊',
+      'warp',
+      'warping',
+      'warped',
+      'curling',
+      'lifting',
+      'corners lifting',
+    ],
     mechanism:
-      '上層冷卻收縮時把已固化的下層往上拉。截面越大、材料收縮率越高、環境溫度越低就越嚴重。',
+      'As the upper layers cool they shrink and pull the already-solid layers below them upward. ' +
+      'It gets worse with a larger cross-section, a higher-shrinkage material and colder surroundings.',
     remedies: [
       {
         key: 'hot_plate_temp_initial_layer',
         direction: 'increase',
-        suggested: '+5 ~ +10 °C',
-        rationale: '提高首層熱床溫度讓底層保持軟黏，抵抗上層的收縮拉力。',
-        cost: '底部可能略微外擴，需要一併看象腿。',
+        suggested: '+5 to +10 °C',
+        rationale:
+          'A hotter first-layer bed keeps the bottom layer soft and tacky so it resists the pull of the shrinking layers above.',
+        cost: "The base may flare out slightly; check for elephant's foot at the same time.",
       },
       {
         key: 'brim_type',
         direction: 'set',
         suggested: 'outer_only',
-        rationale: '增加附著面積，用機械方式把邊角壓住。',
-        cost: '需要後處理拆除，邊緣會留下痕跡。',
+        rationale: 'Adds contact area and holds the corners down mechanically.',
+        cost: 'Has to be removed afterwards and leaves marks along the bottom edge.',
       },
       {
         key: 'brim_width',
         direction: 'increase',
-        suggested: '5 ~ 8 mm',
-        rationale: '翹曲力隨截面積上升，brim 要夠寬才拉得住。',
-        cost: '耗材與拆除工作增加。',
+        suggested: '5–8 mm',
+        rationale: 'Warping force grows with the cross-section, so the brim has to be wide enough to hold.',
+        cost: 'More filament and more removal work.',
       },
       {
         key: 'fan_max_speed',
         direction: 'decrease',
-        suggested: 'ABS／ASA 降到 20% 以下',
-        rationale: '減少強制冷卻造成的溫差梯度，這是收縮應力的來源。',
-        cost: '懸空與小特徵品質下降。',
+        suggested: 'Below 20% for ABS/ASA',
+        rationale:
+          'Less forced cooling means a smaller temperature gradient, and that gradient is where the shrinkage stress comes from.',
+        cost: 'Overhangs and small features get worse.',
       },
       {
         key: 'draft_shield',
         direction: 'set',
         suggested: 'enabled',
-        rationale: '開放式機型印高收縮材料時，隔絕氣流比調任何冷卻參數都有效。',
-        cost: '耗材與時間明顯增加。',
+        rationale:
+          'On an open-frame printer running a high-shrinkage material, keeping drafts out does more than any cooling setting.',
+        cost: 'Noticeably more filament and time.',
       },
     ],
     materialNotes: {
-      PLA: '收縮率低，翹邊通常是熱床髒污或校平問題，先清潔再調參數。',
-      ABS: '收縮率高，必須關風扇並封閉腔體，參數只能補救不能根治。',
-      ASA: '同 ABS。',
-      PETG: '收縮中等，但過度附著反而會拉壞熱床表面，brim 適度即可。',
+      PLA: 'Low shrinkage. Warping with PLA is usually a dirty plate or a levelling problem; clean the plate before changing parameters.',
+      ABS: 'High shrinkage. Turn the part fan off and enclose the printer; parameters can only mitigate it, not cure it.',
+      ASA: 'Same as ABS.',
+      PETG: 'Moderate shrinkage, but too much adhesion can tear the plate surface when the part comes off; keep the brim modest.',
     },
     notAParameterProblem:
-      '熱床有油污、PEI 板磨損、或熱床校平偏差，都會表現成翹邊。先用異丙醇清潔並確認校平，再動參數。',
+      'Grease on the plate, a worn PEI sheet or an off bed level all show up as warping. ' +
+      'Clean the plate with isopropyl alcohol and check the levelling before changing parameters.',
   },
   {
     id: 'first-layer-adhesion',
-    label: '首層不黏／局部缺料',
-    aliases: ['首層', '第一層', '不黏', '沒黏住', '脫落', 'first layer', 'adhesion', 'not sticking'],
-    mechanism: '噴頭與熱床距離過大、溫度不足，或擠出量不夠，導致線材沒有被壓進板材紋理。',
+    label: 'First layer not sticking / gaps in the first layer',
+    aliases: [
+      '首層',
+      '第一層',
+      '不黏',
+      '沒黏住',
+      '脫落',
+      'first layer',
+      'first-layer',
+      'adhesion',
+      'not sticking',
+      "won't stick",
+    ],
+    mechanism:
+      'The nozzle is too far from the plate, the temperature is too low, or too little material is extruded, ' +
+      'so the line is not pressed into the plate texture.',
     remedies: [
       {
         key: 'initial_layer_print_height',
         direction: 'increase',
         suggested: '0.25 mm',
-        rationale: '較厚的首層能吸收校平誤差與熱床不平。',
-        cost: '首層尺寸精度下降。',
+        rationale: 'A thicker first layer absorbs levelling error and an uneven plate.',
+        cost: 'Lower dimensional accuracy on the first layer.',
       },
       {
         key: 'hot_plate_temp_initial_layer',
         direction: 'increase',
         suggested: '+5 °C',
-        rationale: '提高熔接性。',
-        cost: '象腿風險上升。',
+        rationale: 'Improves bonding to the plate.',
+        cost: "Higher risk of elephant's foot.",
       },
       {
         key: 'initial_layer_flow_ratio',
         direction: 'increase',
-        suggested: '1.02 ~ 1.05',
-        rationale: '略微過擠出讓首層被壓實、填滿板材紋理。',
-        cost: '過高會在首層堆出毛邊並加重象腿。',
+        suggested: '1.02–1.05',
+        rationale: 'Slight over-extrusion presses the first layer down so it fills the plate texture.',
+        cost: "Too much leaves ridges on the first layer and makes elephant's foot worse.",
       },
       {
         key: 'initial_layer_speed',
         direction: 'decrease',
-        suggested: '30 ~ 50 mm/s',
-        rationale: '慢速給材料時間熔接與攤平。',
-        cost: '首層時間拉長。',
+        suggested: '30–50 mm/s',
+        rationale: 'Going slower gives the material time to bond and spread out.',
+        cost: 'The first layer takes longer.',
       },
     ],
     notAParameterProblem:
-      '這個症狀最常見的成因是熱床髒污與校平。Bambu 的自動校平不會補償油污，先清潔板材。',
+      'The most common causes of this symptom are a dirty plate and levelling. ' +
+      "Bambu's automatic bed levelling does not compensate for grease; clean the plate first.",
   },
   {
     id: 'knocked-over',
-    label: '印到一半被撞倒／脫床',
+    label: 'Knocked over / came off the plate mid-print',
     aliases: [
       '撞倒',
       '撞掉',
@@ -142,58 +172,66 @@ const SYMPTOMS: readonly Symptom[] = [
       '被噴頭帶走',
       'knocked over',
       'knocked off',
+      'knocked loose',
       'toppled',
       'fell over',
       'broke loose',
+      'came off the bed',
+      'came off the plate',
     ],
     mechanism:
-      '前幾層都黏得好好的，印到一半才倒，問題通常不在首層而在槓桿：噴頭在高處碰到零件時的力矩是' +
-      '「力 × 高度」，撐住它的只有底面附著力 ×「底面半徑」。底面小、又高、或上寬下窄（碗、杯、' +
-      '倒錐、人像）的件，越印越高槓桿越大。實例：17 mm 的腳撐 31 mm 高、頂部 38 mm 寬的碗，' +
-      '第一層只有約 200 mm² 貼床。',
+      'If the first layers stuck fine and the part only fell partway through, the problem is usually leverage, ' +
+      'not the first layer. When the nozzle hits the part high up, the tipping moment is "force × height", and ' +
+      'the only thing resisting it is plate adhesion × "footprint radius". A part with a small base that is tall ' +
+      'or wider at the top than at the bottom (bowls, cups, inverted cones, figurines) gains leverage with every ' +
+      'layer. Real case: a bowl 31 mm tall and 38 mm wide at the top, standing on a 17 mm foot, had only about ' +
+      '200 mm² of first layer on the plate.',
     remedies: [
       {
         key: 'brim_type',
         direction: 'set',
         suggested: 'outer_only',
         rationale:
-          '同時加大貼床面積與抵抗翻倒的底面半徑。只對那個物件設（GUI 的 Objects 設定，或 3MF ' +
-          '物件層的 brim_type），其他零件不必跟著留 brim 痕。原廠的 auto_brim 常判定不加。',
-        cost: '要拆 brim，物件底緣會留痕。',
+          'Increases both the contact area and the footprint radius that resists tipping. Set it on that object only ' +
+          '(the Objects settings in the GUI, or the object-level brim_type in the 3MF) so the other parts do not get ' +
+          "brim marks. Bambu's stock auto_brim often decides not to add one.",
+        cost: 'The brim has to be removed and leaves a mark along the bottom edge of the object.',
       },
       {
         key: 'brim_width',
         direction: 'increase',
-        suggested: '8 ~ 10 mm',
+        suggested: '8–10 mm',
         rationale:
-          '小底面要夠寬才有感：上面那個碗加 8 mm 後第一層貼床從約 200 mm² 變約 770 mm²（3.9 倍），' +
-          '底面半徑也從 8.5 mm 拉到約 16 mm。',
-        cost: '耗材與拆除工作增加；太靠近其他物件時會黏在一起。',
+          'A small base needs a wide brim to make a difference: adding 8 mm to the bowl above raised its first-layer ' +
+          'contact from about 200 mm² to about 770 mm² (3.9×) and its footprint radius from 8.5 mm to about 16 mm.',
+        cost: 'More filament and more removal work; brims that come too close to other objects fuse to them.',
       },
       {
         key: 'hot_plate_temp_initial_layer',
         direction: 'increase',
         suggested: '+5 °C',
-        rationale: '小接觸面全靠附著力，首層熱床溫度高一點黏得更牢。',
-        cost: '底部可能略微外擴，要一併看象腿。',
+        rationale:
+          'A small contact patch relies entirely on adhesion, and a slightly hotter first-layer bed holds it better.',
+        cost: "The base may flare out slightly; check for elephant's foot as well.",
       },
     ],
     materialNotes: {
-      PLA: '收縮小，倒下多半是槓桿與附著問題，不是翹曲。',
-      ABS: '底緣會先翹起，翹起的邊再被噴頭撞到才倒；先看 warping 那一組。',
-      ASA: '同 ABS。',
+      PLA: 'Low shrinkage, so a fall is usually down to leverage and adhesion, not warping.',
+      ABS: 'The bottom edge lifts first and the nozzle then catches the lifted edge and knocks the part over; start with the warping remedies.',
+      ASA: 'Same as ABS.',
     },
     notAParameterProblem:
-      '先用 bambu_check_printability 看有沒有 small-footprint 或 tall-and-narrow；能換方向讓大面貼床就先換。' +
-      '熱床油污會讓小接觸面直接失效：紋理 PEI 用洗碗精與清水洗。不要先開 reduce_crossing_wall —— ' +
-      'Bambu 原廠的 Auto Lift 在空跑跨越外牆時本來就會抬升；實測上面那個碗，開啟後未抬升的跨外牆空跑' +
-      '反而從 0 次變 10 次。',
+      'Run bambu_check_printability first and look for small-footprint or tall-and-narrow; if another orientation ' +
+      'puts a large face on the plate, change that first. Grease makes a small contact patch fail outright: wash a ' +
+      'textured PEI plate with dish soap and water. Do not reach for reduce_crossing_wall first: Bambu\'s stock ' +
+      'Auto Lift already lifts the nozzle on travel moves that cross outer walls, and on the bowl above, enabling ' +
+      'it actually raised the number of un-lifted travel moves across outer walls from 0 to 10.',
   },
   {
     id: 'elephant-foot',
-    label: '象腿／底部外擴',
-    // 使用者實際的講法是「底部一圈胖出來」而不是教科書名詞，
-    // 所以 alias 要涵蓋口語片段，不能只放正式名稱。
+    label: "Elephant's foot / flared base",
+    // Users actually say "the bottom bulges out all the way round" rather than the textbook term,
+    // so the aliases have to cover colloquial fragments, not just the formal name.
     aliases: [
       '象腿',
       '底部一圈',
@@ -204,395 +242,466 @@ const SYMPTOMS: readonly Symptom[] = [
       '裙邊',
       'elephant foot',
       'elephant-foot',
+      "elephant's foot",
+      'flared base',
+      'bulging base',
     ],
-    mechanism: '首層被噴頭壓扁且尚未凝固就承受上層重量，向外擠出形成裙邊。',
+    mechanism:
+      'The first layer is squashed by the nozzle and, before it has set, has to carry the weight of the layers ' +
+      'above, so it squeezes outward into a lip.',
     remedies: [
       {
         key: 'elefant_foot_compensation',
         direction: 'increase',
-        suggested: '0.15 ~ 0.25 mm',
-        rationale: '直接把首層輪廓向內縮，抵銷外擴量。',
-        cost: '過大會讓首層附著面積變小而脫落。',
+        suggested: '0.15–0.25 mm',
+        rationale: 'Pulls the first-layer outline inward to cancel out the flare.',
+        cost: 'Too much shrinks the first-layer contact area and the part can come loose.',
       },
       {
         key: 'hot_plate_temp_initial_layer',
         direction: 'decrease',
         suggested: '-5 °C',
-        rationale: '降低底部軟化程度。',
-        cost: '附著力下降，與翹邊是拉鋸關係。',
+        rationale: 'Keeps the bottom layers from softening as much.',
+        cost: 'Less adhesion; this trades directly against warping.',
       },
       {
         key: 'initial_layer_print_height',
         direction: 'decrease',
         suggested: '0.2 mm',
-        rationale: '減少被壓扁的量。',
-        cost: '對校平誤差更敏感。',
+        rationale: 'Less material gets squashed.',
+        cost: 'More sensitive to levelling error.',
       },
     ],
   },
   {
     id: 'stringing',
-    label: '牽絲／拉絲',
-    aliases: ['牽絲', '拉絲', '蜘蛛絲', '毛絲', 'string', 'stringing', 'oozing', 'wisp'],
-    mechanism: '空跑時噴頭內的熔融材料因重力與殘壓滲出，在兩點之間拉成細絲。',
+    label: 'Stringing / oozing',
+    aliases: ['牽絲', '拉絲', '蜘蛛絲', '毛絲', 'string', 'stringing', 'oozing', 'wisp', 'hairy'],
+    mechanism:
+      'During travel moves, molten material in the nozzle oozes out under gravity and residual pressure and is ' +
+      'drawn into fine strings between two points.',
     remedies: [
       {
         key: 'nozzle_temperature',
         direction: 'decrease',
-        suggested: '-5 ~ -10 °C',
-        rationale: '降低流動性是抑制滲料最有效的單一手段。',
-        cost: '層間結合變弱，過低會欠擠出。',
+        suggested: '-5 to -10 °C',
+        rationale: 'Making the melt less runny is the single most effective way to stop oozing.',
+        cost: 'Weaker layer bonding; too low and it under-extrudes.',
       },
       {
         key: 'filament_retraction_length',
         direction: 'increase',
-        suggested: '直驅 0.8 ~ 1.2 mm',
-        rationale: '把殘壓抽掉。',
-        cost: '過長會造成下一段起始欠擠出。',
+        suggested: 'Direct drive: 0.8–1.2 mm',
+        rationale: 'Relieves the residual pressure in the nozzle.',
+        cost: 'Too long causes under-extrusion at the start of the next line.',
       },
       {
         key: 'filament_retraction_speed',
         direction: 'increase',
-        suggested: '30 ~ 40 mm/s',
-        rationale: '斷料更乾脆。',
-        cost: 'TPU 等軟料會被磨損。',
+        suggested: '30–40 mm/s',
+        rationale: 'Gives a cleaner break in the filament.',
+        cost: 'Soft filaments such as TPU get ground down by the extruder gears.',
       },
       {
         key: 'filament_z_hop',
         direction: 'increase',
-        suggested: '0.2 ~ 0.4 mm',
-        rationale: '讓噴頭離開表面，殘絲不會黏回模型。',
-        cost: '時間增加，且可能在抬起點留下小尖點。',
+        suggested: '0.2–0.4 mm',
+        rationale: 'Lifts the nozzle off the surface so leftover strands are not dragged back onto the model.',
+        cost: 'Adds time and can leave small blips where the nozzle lifts.',
       },
     ],
     materialNotes: {
-      PETG: '天生易牽絲，回抽調整效果有限，優先降溫並確保料乾燥。',
-      TPU: '不要加大回抽速度，改用降溫與降速處理。',
+      PETG: 'Strings by nature, and retraction tuning only helps so much; lower the temperature and make sure the filament is dry first.',
+      TPU: 'Do not raise the retraction speed; lower the temperature and the speed instead.',
     },
     notAParameterProblem:
-      '受潮的線材會在噴頭內汽化並噴出毛絲，任何回抽設定都救不了。先烘乾再談參數。',
+      'Wet filament boils in the nozzle and spits out fine hairs, and no retraction setting can fix that. ' +
+      'Dry the filament before tuning anything.',
   },
   {
     id: 'layer-delamination',
-    label: '層裂／層間剝離',
-    aliases: ['層裂', '分層', '剝離', '裂開', '層間', 'delamination', 'layer separation', 'cracking'],
-    mechanism: '上下層熔接不足，界面強度低於材料本體，受力或收縮時沿層面裂開。',
+    label: 'Layer splitting / delamination',
+    aliases: [
+      '層裂',
+      '分層',
+      '剝離',
+      '裂開',
+      '層間',
+      'delamination',
+      'layer separation',
+      'cracking',
+      'layer split',
+      'layers separating',
+    ],
+    mechanism:
+      'The layers have not fused well enough, so the interface is weaker than the material itself and the part ' +
+      'splits along a layer under load or shrinkage.',
     remedies: [
       {
         key: 'nozzle_temperature',
         direction: 'increase',
-        suggested: '+5 ~ +10 °C',
-        rationale: '提高熔接深度，這是層間強度最直接的槓桿。',
-        cost: '牽絲與懸空下垂變嚴重。',
+        suggested: '+5 to +10 °C',
+        rationale: 'Fuses each layer more deeply into the one below; this is the most direct lever on layer strength.',
+        cost: 'More stringing and more overhang droop.',
       },
       {
         key: 'fan_max_speed',
         direction: 'decrease',
-        suggested: 'ABS／ASA 0 ~ 20%',
-        rationale: '過度冷卻讓上一層在新層貼上前就固化。',
-        cost: '懸空品質下降。',
+        suggested: 'ABS/ASA: 0–20%',
+        rationale: 'Over-cooling lets the previous layer set before the new layer lands on it.',
+        cost: 'Overhangs get worse.',
       },
       {
         key: 'line_width',
         direction: 'increase',
-        suggested: '0.45 ~ 0.5 mm',
-        rationale: '加大接觸面積。',
-        cost: '細節解析度下降。',
+        suggested: '0.45–0.5 mm',
+        rationale: 'Increases the contact area between layers.',
+        cost: 'Less fine detail.',
       },
       {
         key: 'layer_height',
         direction: 'decrease',
-        suggested: '0.16 ~ 0.2 mm',
-        rationale: '薄層的相對熔接比例較高。',
-        cost: '時間增加。',
+        suggested: '0.16–0.2 mm',
+        rationale: 'Thinner layers have a larger fused fraction relative to their height.',
+        cost: 'Longer print.',
       },
     ],
   },
   {
     id: 'overhang-droop',
-    label: '懸空下垂／斜面起毛',
+    label: 'Overhang droop / rough sloped surfaces',
     aliases: ['懸空', '下垂', '垂下來', '斜面', '起毛', 'overhang', 'droop', 'sagging', 'curl'],
-    mechanism: '懸空處下方無支撐，擠出的線在固化前因重力下沉並被噴頭拖動。',
+    mechanism:
+      'Nothing supports the overhang from below, so the extruded line sinks under gravity before it sets and ' +
+      'gets dragged by the nozzle.',
     remedies: [
       {
         key: 'enable_overhang_speed',
         direction: 'enable',
-        rationale: '依懸空程度自動分四段降速，讓風扇有時間固化。',
-        cost: '時間增加，但只作用在懸空段。',
+        rationale:
+          'Slows down automatically in four steps according to how steep the overhang is, giving the fan time to set the plastic.',
+        cost: 'Adds time, but only on overhang sections.',
       },
       {
         key: 'fan_max_speed',
         direction: 'increase',
-        suggested: 'PLA 100%',
-        rationale: '快速固化是懸空品質的關鍵。',
-        cost: 'ABS／ASA 會因此翹曲，需權衡。',
+        suggested: 'PLA: 100%',
+        rationale: 'Fast solidification is the key to overhang quality.',
+        cost: 'ABS/ASA will warp as a result; weigh the trade-off.',
       },
       {
         key: 'slow_down_layer_time',
         direction: 'increase',
-        suggested: '8 ~ 12 s',
-        rationale: '小截面層要有足夠冷卻時間。',
-        cost: '總時間增加。',
+        suggested: '8–12 s',
+        rationale: 'Layers with a small cross-section need enough time to cool.',
+        cost: 'Longer total print time.',
       },
       {
         key: 'support_threshold_angle',
         direction: 'decrease',
         suggested: '30°',
-        rationale: '參數調到極限仍不行時，就該讓支撐介入。',
-        cost: '耗材、時間與後處理增加，接觸面留疤。',
+        rationale: 'When parameters pushed to their limits still are not enough, it is time to let supports take over.',
+        cost: 'More filament, time and post-processing, and scars where the supports touched.',
       },
     ],
-    notAParameterProblem: '把模型轉個角度重新擺放，往往比任何參數都有效。先考慮擺放方向。',
+    notAParameterProblem:
+      'Re-orienting the model is often more effective than any parameter. Consider the orientation first.',
   },
   {
     id: 'top-surface-holes',
-    label: '頂面有洞／枕紋',
-    aliases: ['頂面', '頂層', '有洞', '枕紋', '凹陷', 'pillowing', 'top surface', 'holes'],
-    mechanism: '頂層實心層在稀疏填充上方跨距過大，來不及支撐就下沉。',
+    label: 'Holes in the top surface / pillowing',
+    aliases: ['頂面', '頂層', '有洞', '枕紋', '凹陷', 'pillowing', 'top surface', 'top layer', 'holes'],
+    mechanism:
+      'The solid top layers have to span too far across the sparse infill and sag before there is anything to hold them up.',
     remedies: [
       {
         key: 'top_shell_layers',
         direction: 'increase',
-        suggested: '5 ~ 6',
-        rationale: '多幾層才能把前一層的空隙逐步補平。',
-        cost: '時間增加。',
+        suggested: '5–6',
+        rationale: 'Each extra layer closes more of the gaps left by the one below it.',
+        cost: 'Longer print.',
       },
       {
         key: 'sparse_infill_density',
         direction: 'increase',
-        suggested: '20 ~ 25%',
-        rationale: '縮短頂層需要跨越的距離。',
-        cost: '耗材與時間增加。',
+        suggested: '20–25%',
+        rationale: 'Shortens the distance the top layers have to span.',
+        cost: 'More filament and time.',
       },
       {
         key: 'fan_max_speed',
         direction: 'increase',
-        rationale: '頂層跨距本質上是短橋接，冷卻能讓它挺住。',
-        cost: '高收縮材料要小心翹曲。',
+        rationale: 'Spanning the infill is essentially a series of short bridges, and cooling lets them hold.',
+        cost: 'Watch for warping with high-shrinkage materials.',
       },
       {
         key: 'ironing_type',
         direction: 'set',
         suggested: 'top',
-        rationale: '前面都做了還有輕微紋路時，用熨燙收尾。',
-        cost: '每個頂面都要額外掃一遍，時間增加明顯。',
+        rationale: 'If faint texture remains after the steps above, finish the surface with ironing.',
+        cost: 'Every top surface gets an extra pass; noticeably longer print.',
       },
     ],
   },
   {
     id: 'ringing',
-    label: '振紋／鬼影',
-    aliases: ['振紋', '鬼影', '波紋', '重影', 'ringing', 'ghosting', 'vibration', 'artifact'],
-    mechanism: '機構在轉角急停急起時的慣性振動被複製到表面。',
+    label: 'Ringing / ghosting',
+    aliases: ['振紋', '鬼影', '波紋', '重影', 'ringing', 'ghosting', 'vibration', 'artifact', 'echoing', 'ripples'],
+    mechanism: 'Vibration from the motion system stopping and starting sharply at corners gets copied into the surface.',
     remedies: [
       {
         key: 'outer_wall_speed',
         direction: 'decrease',
         suggested: '-30%',
-        rationale: '外牆是唯一看得到的路徑，降速代價最低。',
-        cost: '總時間增加有限。',
+        rationale: 'The outer wall is the only path you can see, so slowing it down costs the least.',
+        cost: 'Only a small increase in total print time.',
       },
       {
         key: 'default_acceleration',
         direction: 'decrease',
         suggested: '-30%',
-        rationale: '振紋的成因是加速度而不是速度本身。',
-        cost: '所有路徑都變慢，時間增加明顯。',
+        rationale: 'Ringing comes from acceleration, not from speed itself.',
+        cost: 'Every path slows down; noticeably longer print.',
       },
     ],
     notAParameterProblem:
-      'Bambu 機型有輸入整形（input shaping）。皮帶張力、機器沒放平、或放在會晃的桌子上，都比參數更可能是主因。',
+      'Bambu printers have input shaping. Loose belts, a printer that is not standing level or a wobbly table are ' +
+      'more likely causes than any parameter.',
   },
   {
     id: 'dimensional-accuracy',
-    label: '尺寸不準／孔太小裝不進去',
-    aliases: ['尺寸', '不準', '孔太小', '裝不進', '公差', '配合', 'dimension', 'tolerance', 'hole', 'fit'],
-    mechanism: '擠出線寬與轉角內縮讓內孔偏小、外形偏大，這是 FDM 的系統性偏差不是隨機誤差。',
+    label: 'Dimensions off / holes too small to fit',
+    aliases: [
+      '尺寸',
+      '不準',
+      '孔太小',
+      '裝不進',
+      '公差',
+      '配合',
+      'dimension',
+      'tolerance',
+      'hole',
+      'fit',
+      'too tight',
+      'accuracy',
+    ],
+    mechanism:
+      'Extrusion width and the inward pull at corners make holes come out small and outer shapes come out large. ' +
+      'This is a systematic FDM bias, not random error.',
     remedies: [
       {
         key: 'xy_hole_compensation',
         direction: 'increase',
-        suggested: '0.1 ~ 0.2 mm',
-        rationale: '只擴大孔洞，不動外形。',
-        cost: '過大會讓配合變鬆。',
+        suggested: '0.1–0.2 mm',
+        rationale: 'Enlarges holes only, without touching outer shapes.',
+        cost: 'Too much makes fits loose.',
       },
       {
         key: 'xy_contour_compensation',
         direction: 'decrease',
-        suggested: '-0.05 ~ -0.1 mm',
-        rationale: '外形偏大時單獨縮小輪廓。',
-        cost: '會同時影響所有外側特徵。',
+        suggested: '-0.05 to -0.1 mm',
+        rationale: 'Shrinks only the outer contour when outer shapes come out large.',
+        cost: 'Affects every outer feature at once.',
       },
       {
         key: 'elefant_foot_compensation',
         direction: 'increase',
-        rationale: '底部幾層的外擴常被誤判成整體尺寸不準。',
-        cost: '過大影響首層附著。',
+        rationale: 'Flare in the bottom few layers is often mistaken for an overall dimensional error.',
+        cost: 'Too much hurts first-layer adhesion.',
       },
       {
         key: 'precise_z_height',
         direction: 'enable',
-        rationale: '總高不是層高整數倍時會有誤差。',
-        cost: '最後幾層層高不一致。',
+        rationale: 'The total height comes out wrong when it is not a whole multiple of the layer height.',
+        cost: 'The last few layers end up with uneven heights.',
       },
     ],
     notAParameterProblem:
-      '先印一個尺寸校正塊量測實際偏差量，再決定補償值。沒有量測就調補償只是換一種猜。',
+      'Print a calibration block and measure the actual error before choosing compensation values. ' +
+      'Adjusting compensation without measuring is just a different way of guessing.',
   },
   {
     id: 'under-extrusion',
-    label: '欠擠出／線變細斷續',
-    aliases: ['欠擠出', '缺料', '線太細', '斷斷續續', '有縫', 'under extrusion', 'underextrusion', 'gaps'],
-    mechanism: '需求流量超過熱端熔化能力，或進料受阻。',
+    label: 'Under-extrusion / thin or broken lines',
+    aliases: [
+      '欠擠出',
+      '缺料',
+      '線太細',
+      '斷斷續續',
+      '有縫',
+      'under extrusion',
+      'underextrusion',
+      'under-extrusion',
+      'under-extruding',
+      'gaps',
+    ],
+    mechanism: 'The requested flow exceeds what the hotend can melt, or the filament feed is obstructed.',
     remedies: [
       {
         key: 'filament_max_volumetric_speed',
         direction: 'decrease',
-        suggested: 'PLA 12 ~ 15 mm³/s',
-        rationale: '這是真正的天花板；速度設再高也只會欠擠出。',
-        cost: '所有速度被壓低，時間增加。',
+        suggested: 'PLA: 12–15 mm³/s',
+        rationale: 'This is the real ceiling; setting speeds higher than it allows only produces under-extrusion.',
+        cost: 'Every speed gets capped lower, so the print takes longer.',
       },
       {
         key: 'nozzle_temperature',
         direction: 'increase',
         suggested: '+10 °C',
-        rationale: '提高熔化速率以支撐目標流量。',
-        cost: '牽絲與懸空下垂變嚴重。',
+        rationale: 'Raises the melt rate so the hotend can keep up with the target flow.',
+        cost: 'More stringing and more overhang droop.',
       },
       {
         key: 'sparse_infill_speed',
         direction: 'decrease',
-        rationale: '填充通常是流量需求的峰值來源。',
-        cost: '時間增加。',
+        rationale: 'Infill is usually where the peak flow demand comes from.',
+        cost: 'Longer print.',
       },
     ],
     notAParameterProblem:
-      '噴頭部分堵塞、擠出齒輪打滑、線材受潮或纏繞，都會表現成欠擠出。先看擠出機是否正常出料。',
+      'A partly clogged nozzle, slipping extruder gears, and wet or tangled filament all look like under-extrusion. ' +
+      'Check that the extruder is feeding properly first.',
   },
   {
     id: 'seam-visible',
-    label: '接縫明顯',
-    aliases: ['接縫', '縫', '疤', 'Z 縫', 'seam', 'z seam', 'blob'],
-    mechanism: '每層起訖點的壓力變化在同一位置累積成一條可見的疤。',
+    label: 'Visible seam',
+    aliases: ['接縫', '縫', '疤', 'Z 縫', 'seam', 'z seam', 'z-seam', 'blob', 'zits'],
+    mechanism:
+      'The pressure change where each layer starts and ends builds up at the same spot into a visible scar.',
     remedies: [
       {
         key: 'has_scarf_joint_seam',
         direction: 'enable',
-        rationale: '斜接縫把起訖做成漸變，是目前最有效的手段。',
-        cost: '略增時間。',
+        rationale: 'A scarf seam ramps the start and end in gradually; it is currently the most effective option.',
+        cost: 'Slightly longer print.',
       },
       {
         key: 'seam_position',
         direction: 'set',
         suggested: 'back',
-        rationale: '把縫統一藏到背面。',
-        cost: '背面必須是不需要看的那面。',
+        rationale: 'Hides the seam on the back of the part.',
+        cost: 'The back has to be a side nobody needs to look at.',
       },
       {
         key: 'seam_position',
         direction: 'set',
         suggested: 'aligned',
-        rationale: '排成一條直線，觀感上比隨機散點乾淨。',
-        cost: '仍看得到一條線。',
+        rationale: 'Lines the seam up into one straight line, which looks cleaner than randomly scattered spots.',
+        cost: 'One line is still visible.',
       },
     ],
   },
   {
     id: 'support-removal',
-    label: '支撐拆不下來／拆完留疤',
-    aliases: ['支撐', '拆不掉', '難拆', '留疤', 'support', 'removal', 'scar'],
-    mechanism: '支撐與模型的間隙太小導致熔接在一起，或太大導致懸空面下垂。',
+    label: "Supports won't come off / leave scars",
+    aliases: ['支撐', '拆不掉', '難拆', '留疤', 'support', 'removal', 'scar', 'hard to remove'],
+    mechanism:
+      'The gap between support and model is too small, so they fuse together, or too large, so the supported surface droops.',
     remedies: [
       {
         key: 'support_top_z_distance',
         direction: 'increase',
-        suggested: '0.2 mm（等於一層）',
-        rationale: '留出一層間隙讓支撐可以剝離。',
-        cost: '接觸面會有輕微下垂紋路。',
+        suggested: '0.2 mm (one layer)',
+        rationale: 'Leaves a one-layer gap so the support can be peeled off.',
+        cost: 'Faint droop marks on the supported surface.',
       },
       {
         key: 'support_type',
         direction: 'set',
         suggested: 'tree(auto)',
-        rationale: '樹狀支撐接觸點少、好拆，且省料。',
-        cost: '大面積水平懸空的支撐力不足。',
+        rationale: 'Tree supports have fewer contact points, come off easily and use less filament.',
+        cost: 'Not enough holding power under large flat horizontal overhangs.',
       },
       {
         key: 'support_threshold_angle',
         direction: 'increase',
-        suggested: '45 ~ 55°',
-        rationale: '減少不必要的支撐，能自撐的地方就別加。',
-        cost: '過大會讓真正需要支撐的地方失敗。',
+        suggested: '45–55°',
+        rationale: 'Cuts out unnecessary supports; where the model can hold itself up, leave them out.',
+        cost: 'Too high and the areas that really need support fail.',
       },
     ],
   },
   {
     id: 'print-too-slow',
-    label: '列印太慢',
-    aliases: ['太慢', '很慢', '時間太長', '加速', 'slow', 'too slow', 'faster', 'speed up'],
-    mechanism: '時間主要由填充路徑長度、層數與流量上限決定，而不是由外牆速度決定。',
+    label: 'Print takes too long',
+    aliases: [
+      '太慢',
+      '很慢',
+      '時間太長',
+      '加速',
+      'slow',
+      'too slow',
+      'faster',
+      'speed up',
+      'takes too long',
+      'print time',
+    ],
+    mechanism:
+      'Print time is driven mainly by infill path length, layer count and the flow ceiling, not by outer wall speed.',
     remedies: [
       {
         key: 'layer_height',
         direction: 'increase',
-        suggested: '0.24 ~ 0.28 mm',
-        rationale: '層數近乎線性下降，是省時效果最大的單一參數。',
-        cost: '曲面階梯紋明顯，小特徵解析度下降。',
+        suggested: '0.24–0.28 mm',
+        rationale: 'Layer count drops almost linearly; this is the single parameter that saves the most time.',
+        cost: 'Visible stair-stepping on curved surfaces and less resolution on small features.',
       },
       {
         key: 'sparse_infill_density',
         direction: 'decrease',
-        suggested: '10 ~ 15%',
-        rationale: '填充通常佔總時間最大宗且不影響外觀。',
-        cost: '剛性下降，頂面需要靠 top_shell_layers 補。',
+        suggested: '10–15%',
+        rationale: 'Infill usually takes the largest share of the time and does not affect appearance.',
+        cost: 'Less stiffness; top surfaces need more top_shell_layers to make up for it.',
       },
       {
         key: 'sparse_infill_pattern',
         direction: 'set',
         suggested: 'lightning',
-        rationale: '只在頂面需要處長出支撐柱，省料省時最極端。',
-        cost: '幾乎沒有結構強度，只適合外觀件。',
+        rationale:
+          'Grows support columns only where the top surfaces need them; the most aggressive way to save filament and time.',
+        cost: 'Almost no structural strength; only suitable for display parts.',
       },
       {
         key: 'filament_max_volumetric_speed',
         direction: 'increase',
-        rationale: '所有速度設定都被這個值壓著，不放寬它調速度是白調。',
-        cost: '超過熱端能力就會欠擠出，必須實測驗證。',
+        rationale:
+          'Every speed setting is capped by this value; raising speeds without raising this cap changes nothing.',
+        cost: "Beyond the hotend's capacity it under-extrudes; it has to be verified with a test print.",
       },
     ],
   },
   {
     id: 'bridging-sag',
-    label: '橋接下垂',
+    label: 'Sagging bridges',
     aliases: ['橋接', '跨空', '架橋', '下垂', 'bridge', 'bridging', 'sag'],
-    mechanism: '跨越空隙的線材在兩端固定前因重力下沉。',
+    mechanism: 'Filament spanning a gap sinks under gravity before both ends are anchored.',
     remedies: [
       {
         key: 'bridge_flow',
         direction: 'decrease',
         suggested: '0.9',
-        rationale: '略微欠擠出讓線被拉緊而不是垂下。',
-        cost: '過低會斷線。',
+        rationale: 'Slight under-extrusion pulls the line taut instead of letting it hang.',
+        cost: 'Too low and the line breaks.',
       },
       {
         key: 'fan_max_speed',
         direction: 'increase',
         suggested: '100%',
-        rationale: '橋接段必須立即固化。',
-        cost: '高收縮材料翹曲。',
+        rationale: 'Bridges have to set immediately.',
+        cost: 'High-shrinkage materials warp.',
       },
       {
         key: 'bridge_speed',
         direction: 'increase',
         suggested: '50 mm/s',
-        rationale: '較快的橫越讓線被拉直。',
-        cost: '過快會拉斷。',
+        rationale: 'Crossing faster pulls the line straight.',
+        cost: 'Too fast and the line snaps.',
       },
     ],
   },
   {
     id: 'print-in-place-fused',
-    label: '列印即組裝的零件黏死／轉不動',
+    label: "Print-in-place parts fused / won't move",
     aliases: [
       '黏死',
       '黏住',
@@ -615,113 +724,139 @@ const SYMPTOMS: readonly Symptom[] = [
       'seized',
       "won't spin",
       'not moving',
+      "won't turn",
+      "won't move",
+      'welded',
     ],
     mechanism:
-      '相鄰零件之間的設計間隙小於印表機能解析的最小寬度。熔融的塑膠有寬度也會塌陷，' +
-      '兩道相隔 0.1 mm 的外牆在還沒固化時就已經碰到彼此並焊住。' +
-      '0.4 噴頭印 PLA 的實務下限大約是 0.15–0.20 mm；低於這個數字就是在賭。' +
-      '首層還會再壞一次：被壓扁的第一層向外擴，把底部先黏起來。',
+      'The designed clearance between neighbouring parts is smaller than the narrowest gap the printer can resolve. ' +
+      'Molten plastic has width and slumps, so two outer walls 0.1 mm apart touch and weld together before they set. ' +
+      'With a 0.4 mm nozzle and PLA the practical minimum is about 0.15–0.20 mm; anything below that is a gamble. ' +
+      'The first layer makes it worse again: the squashed first layer spreads outward and welds the bottom together first.',
     remedies: [
       {
         key: 'xy_contour_compensation',
         direction: 'decrease',
         suggested: '-0.05 mm',
         rationale:
-          '把所有實體外輪廓每側縮 0.05 mm。相對的兩個面各縮一次，間隙就長 0.10 mm。' +
-          '這是唯一不用改模型就能加大間隙的辦法。',
-        cost: '所有外形尺寸縮小 0.1 mm，齒厚變薄、背隙變大。玩具無所謂，配合件要留意。',
+          'Shrinks every solid outer contour by 0.05 mm per side. Two facing surfaces each shrink once, so the clearance ' +
+          'grows by 0.10 mm. This is the only way to widen the clearance without editing the model.',
+        cost:
+          'Every outer dimension shrinks by 0.1 mm: thinner gear teeth, more backlash. Fine for toys; watch out on parts that have to fit something.',
       },
       {
         key: 'xy_hole_compensation',
         direction: 'increase',
         suggested: '+0.05 mm',
         rationale:
-          '被別的零件包住的那一側（例如內齒圈的內齒面、軸承的外圈內壁）在切片器眼中是「孔」，' +
-          '不吃 xy_contour_compensation。只調外輪廓的話，這種介面的間隙只會長一半。',
-        cost: '所有孔徑變大 0.1 mm；本來就緊配的銷孔會變鬆。',
+          'The side that wraps around another part (for example the teeth of a ring gear, or the inner wall of a ' +
+          'bearing\'s outer race) is a "hole" to the slicer and is not affected by xy_contour_compensation. If you ' +
+          'adjust only the outer contours, the clearance at such interfaces grows by only half as much.',
+        cost: 'Every hole grows by 0.1 mm; pin holes that were a snug fit become loose.',
       },
       {
         key: 'elefant_foot_compensation',
         direction: 'increase',
-        suggested: '0.20 ~ 0.25 mm',
+        suggested: '0.20–0.25 mm',
         rationale:
-          '首層被壓扁後向外擴，會在最底下那一兩層把零件先焊在一起 —— 上面印得再好都沒用。' +
-          '象腿補償把首層往內縮，抵銷這個外擴。',
-        cost: '首層附著面積略減。底面積小的模型要一併加 brim。',
+          'The squashed first layer spreads outward and welds the parts together in the bottom one or two layers, ' +
+          "no matter how well everything above prints. Elephant's foot compensation pulls the first layer inward to " +
+          'cancel out that spread.',
+        cost: 'Slightly less first-layer contact area. Add a brim as well on models with a small footprint.',
       },
       {
         key: 'detect_thin_wall',
         direction: 'disable',
         rationale:
-          '薄壁偵測會嘗試把窄於一條線寬的區域補出材料 —— 那正是你要留空的間隙。' +
-          'Bambu 原廠預設是關的，但有些從別的切片器轉過來的 preset 會開著。',
-        cost: '模型上真正的薄壁特徵可能缺料。',
+          'Thin wall detection tries to fill regions narrower than one line width with material, and that is exactly ' +
+          "the clearance you want to keep open. Bambu's stock default is off, but some presets carried over from " +
+          'other slicers turn it on.',
+        cost: 'Genuinely thin wall features on the model may come out with material missing.',
       },
       {
         key: 'initial_layer_speed',
         direction: 'decrease',
         suggested: '30 mm/s',
-        rationale: '首層慢一點，擠出量穩定，不會有多餘的材料被推進縫裡。只影響一層，代價很小。',
-        cost: '首層時間增加，總量上可忽略。',
+        rationale:
+          'A slower first layer keeps extrusion steady so no excess material gets pushed into the gaps. ' +
+          'It affects only one layer, so the cost is small.',
+        cost: 'The first layer takes longer; negligible over the whole print.',
       },
       {
         key: 'enable_prime_tower',
         direction: 'enable',
         rationale:
-          '多色列印時每次換料都會殘留舊料。沒有擦拭塔，那些料會吐在模型上；' +
-          '掉進 0.1 mm 的齒縫裡就等於把機構焊死。',
-        cost: '耗材與時間增加，需要額外的板面空間。',
+          'In multi-colour prints every filament change leaves some of the old filament behind. Without a prime tower ' +
+          'that material gets purged onto the model, and if it drops into a 0.1 mm gear gap the mechanism is welded shut.',
+        cost: 'More filament and time, and the tower needs extra space on the plate.',
       },
     ],
     materialNotes: {
-      PLA: '剛性高、幾乎不收縮，間隙夠就會順。是列印即組裝機構最好處理的材料。',
-      PETG: '層間黏性強、容易牽絲，同樣的間隙比 PLA 更容易黏死。建議再多讓 0.05 mm。',
-      TPU: '軟，扳得開但轉起來會拖。列印即組裝的轉動機構不建議用。',
-      ABS: '收縮率高，冷卻後間隙會變，而且變多少不容易預測。',
+      PLA: 'Stiff and barely shrinks, so it moves freely as long as the clearance is big enough. The easiest material for print-in-place mechanisms.',
+      PETG: 'Layers bond strongly and it strings easily, so the same clearance fuses more readily than with PLA. Allow another 0.05 mm.',
+      TPU: 'Soft: you can pull the parts free, but they drag when they turn. Not recommended for rotating print-in-place mechanisms.',
+      ABS: 'High shrinkage; the clearance changes as the part cools, and by how much is hard to predict.',
     },
     notAParameterProblem:
-      '先量再調。用 bambu_measure_clearance 讀出設計間隙到底是多少 —— ' +
-      '如果原始設計只留 0.05 mm，那不是參數能救的，補償再怎麼加也會把齒形吃掉。' +
-      '那種情況要嘛整體放大列印（間隙等比例放大），要嘛換一個模型。' +
-      '另外：拆件時不要硬扳。扳開的齒面是撕裂面，粗糙且不可逆，之後永遠不會順。',
+      'Measure before tuning. Use bambu_measure_clearance to find out what the designed clearance actually is. ' +
+      'If the original design leaves only 0.05 mm, no parameter will save it: enough compensation to open it up ' +
+      'will eat away the tooth profile. In that case either scale the whole print up (the clearance scales with it) ' +
+      'or use a different model. Also, do not force the parts apart. A tooth face that has been forced free is a torn ' +
+      'surface, rough and irreversible, and it will never run smoothly afterwards.',
   },
   {
     id: 'weak-part',
-    label: '成品不夠強／容易斷',
-    aliases: ['不夠強', '強度', '容易斷', '脆', '受力', 'weak', 'strength', 'break', 'brittle'],
-    mechanism: 'FDM 件的弱軸永遠是 Z 向層間。強度來自牆層與層間熔接，不是填充密度。',
+    label: 'Part not strong enough / breaks easily',
+    aliases: [
+      '不夠強',
+      '強度',
+      '容易斷',
+      '脆',
+      '受力',
+      'weak',
+      'strength',
+      'break',
+      'brittle',
+      'fragile',
+      'snaps',
+      'snapped',
+    ],
+    mechanism:
+      'The weak axis of an FDM part is always Z, between the layers. Strength comes from the walls and from layer ' +
+      'fusion, not from infill density.',
     remedies: [
       {
         key: 'wall_loops',
         direction: 'increase',
-        suggested: '4 ~ 5',
-        rationale: '增加牆層的強度／重量效率遠高於增加填充。',
-        cost: '時間與耗材增加。',
+        suggested: '4–5',
+        rationale: 'Adding walls gives far more strength per gram than adding infill.',
+        cost: 'More time and filament.',
       },
       {
         key: 'nozzle_temperature',
         direction: 'increase',
         suggested: '+10 °C',
-        rationale: '層間熔接是主要失效面。',
-        cost: '牽絲與懸空品質下降。',
+        rationale: 'The layer interface is the main failure plane, and a hotter nozzle fuses it better.',
+        cost: 'More stringing and worse overhangs.',
       },
       {
         key: 'sparse_infill_density',
         direction: 'increase',
-        suggested: '30 ~ 40%',
-        rationale: '前兩項做完後再考慮；超過 40% 效益遞減。',
-        cost: '時間與耗材大幅增加。',
+        suggested: '30–40%',
+        rationale: 'Only consider this after the first two; above 40% the returns diminish.',
+        cost: 'Much more time and filament.',
       },
       {
         key: 'sparse_infill_pattern',
         direction: 'set',
         suggested: 'cubic',
-        rationale: '三維方向都有支撐，比 grid 各向均衡。',
-        cost: '略慢於 grid。',
+        rationale: 'Braced in all three directions, so it is more even than grid.',
+        cost: 'Slightly slower than grid.',
       },
     ],
     notAParameterProblem:
-      '受力方向與列印方向的關係，比任何參數都重要。把零件轉成讓受力沿著 XY 而不是 Z，效果數倍於調參數。',
+      'How the load direction relates to the print orientation matters more than any parameter. Orient the part so ' +
+      'the load runs along XY rather than Z; the gain is several times what parameter tuning can give.',
   },
 ];
 
@@ -737,16 +872,16 @@ export function getSymptom(id: string): Symptom | undefined {
 
 export type SymptomMatch = {
   readonly symptom: Symptom;
-  /** 命中的關鍵詞數量，用於排序。 */
+  /** Number of matched keywords, used for ranking. */
   readonly score: number;
   readonly matchedAliases: readonly string[];
 };
 
 /**
- * 以自由文字比對症狀。
+ * Matches symptoms against free text.
  *
- * 刻意不做模糊比對或編輯距離：寧可回報「沒有把握」讓呼叫端改用 `listSymptoms`，
- * 也不要把「翹邊」誤判成「牽絲」然後給出一組會讓情況更糟的建議。
+ * Deliberately no fuzzy matching or edit distance: it is better to report "not confident" and let the caller
+ * fall back to `listSymptoms` than to mistake warping for stringing and hand out remedies that make things worse.
  */
 export function matchSymptoms(text: string): readonly SymptomMatch[] {
   const haystack = text.toLowerCase();
@@ -762,7 +897,7 @@ export function matchSymptoms(text: string): readonly SymptomMatch[] {
   return matches.sort((a, b) => b.score - a.score || a.symptom.id.localeCompare(b.symptom.id));
 }
 
-/** 把處置建議展開成含參數說明的完整敘述，供工具回傳。 */
+/** Expands a remedy into a full description, including the parameter details, for tool output. */
 export function explainRemedy(remedy: Remedy): {
   readonly key: string;
   readonly direction: RemedyDirection;

@@ -4,42 +4,46 @@ import { boundingBox, faceNormal, inspectModel, triangleArea, type Triangle } fr
 import type { MeshPart } from './threemf-reader.js';
 
 /**
- * 可列印性分析。
+ * Printability analysis.
  *
- * 這裡做的是「切片前就看得出來的問題」，不是完整的切片模擬。
- * 每一項檢查都標明它的判準與盲點；不確定的事情不會偽裝成確定。
+ * This covers "problems visible before slicing", not a full slicing simulation.
+ * Every check states its criterion and its blind spots; uncertain things are never dressed up
+ * as certain.
  *
- * 懸空角的約定：以**與垂直面的夾角**表示。
- * 垂直牆 = 0°，水平朝下的天花板 = 90°。角度越大越需要支撐。
- * 這個約定與 BambuStudio UI 的 `support_threshold_angle` 未必數值相同，
- * 所以報告只說「幾何上有多陡」，不直接宣稱 Studio 會不會加支撐。
+ * Overhang angle convention: expressed as **the angle from vertical**.
+ * A vertical wall = 0°, a horizontal downward-facing ceiling = 90°. The larger the angle, the
+ * more it needs support. This convention does not necessarily match the numeric value of
+ * `support_threshold_angle` in the BambuStudio UI, so the report only says "how steep it is
+ * geometrically" and does not claim directly whether Studio will add support.
  */
 
 export type PrintabilityOptions = {
-  /** 機台可列印範圍，單位 mm。 */
+  /** Printer build volume, in mm. */
   readonly buildVolume: Vec3;
-  /** 超過這個角度視為需要留意的懸空。 */
+  /** Overhangs steeper than this angle are flagged. */
   readonly overhangThresholdDegrees: number;
-  /** 目前設定的擠出線寬，用來判斷特徵是否過薄。 */
+  /** Currently configured extrusion line width, used to judge whether features are too thin. */
   readonly lineWidthMm: number;
 };
 
 export const DEFAULT_PRINTABILITY_OPTIONS: PrintabilityOptions = {
-  // Bambu Lab P1S／X1C 的實際可列印範圍。
+  // Actual build volume of the Bambu Lab P1S / X1C.
   buildVolume: { x: 256, y: 256, z: 256 },
   overhangThresholdDegrees: 45,
   lineWidthMm: 0.42,
 };
 
 /**
- * 小於這個寬度的縫，幾乎可以確定是建模時沒接上，而不是刻意懸空的設計。
- * Tinkercad 拼方塊時對齊格點吸附差一格（1 mm）就是這個量級。
+ * A gap narrower than this is almost certainly a modelling join that was missed, not an
+ * intentionally floating design. Being one grid-snap step (1 mm) off when assembling boxes in
+ * Tinkercad is exactly this order of magnitude.
  */
 const SEAM_GAP_MM = 2;
 
 /**
- * @param parts 檔案本身的零件邊界（3MF／OBJ）。不給就把整包三角形當一個零件，
- *   浮空偵測會再依共用頂點拆殼，所以 STL 一樣抓得到。
+ * @param parts The file's own part boundaries (3MF/OBJ). If omitted, the whole triangle set is
+ *   treated as one part; floating detection splits it into shells by shared vertices anyway, so
+ *   STL files are caught too.
  */
 export function analysePrintability(
   triangles: readonly Triangle[],
@@ -64,10 +68,10 @@ export function analysePrintability(
     findings.push({
       code: 'exceeds-build-volume',
       severity: 'blocker',
-      summary: `模型 ${fmt(box.size)} mm 超出列印範圍 ${fmt(options.buildVolume)} mm`,
+      summary: `Model ${fmt(box.size)} mm exceeds the build volume ${fmt(options.buildVolume)} mm`,
       detail:
-        `縮到 ${(scale * 100).toFixed(1)}% 以下才放得進去，` +
-        '或是旋轉擺放、把模型切開分件列印。',
+        `It only fits when scaled to ${(scale * 100).toFixed(1)}% or less; ` +
+        'alternatively rotate it, or cut the model and print it in pieces.',
       relatedParameters: [],
     });
   }
@@ -76,10 +80,11 @@ export function analysePrintability(
     findings.push({
       code: 'non-manifold',
       severity: 'warning',
-      summary: `網格未封閉：有 ${inspection.openEdges} 條邊不是恰好由兩個三角形共用`,
+      summary: `Mesh is not closed: ${inspection.openEdges} edge(s) are not shared by exactly two triangles`,
       detail:
-        '切片器仍可能印得出來，但內外判定會出錯，可能導致缺面、實心變空心或多餘的內壁。' +
-        '正解是修復網格（Blender 3D Print Toolbox 或 Netfabb），不是靠切片參數補救。',
+        'The slicer may still print it, but inside/outside classification will go wrong, which can ' +
+        'cause missing faces, solids turning hollow, or extra internal walls. ' +
+        'The real fix is to repair the mesh (Blender 3D Print Toolbox or Netfabb), not to compensate with slicer settings.',
       relatedParameters: [],
     });
   }
@@ -88,8 +93,9 @@ export function analysePrintability(
     findings.push({
       code: 'degenerate-geometry',
       severity: 'note',
-      summary: `有 ${inspection.degenerateTriangles} 個面積為零的三角形`,
-      detail: '多半是匯出時的殘留，通常無害，但會讓網格修復工具誤報。',
+      summary: `${inspection.degenerateTriangles} triangle(s) have zero area`,
+      detail:
+        'Usually leftovers from export and generally harmless, but they make mesh repair tools report false positives.',
       relatedParameters: [],
     });
   }
@@ -108,10 +114,10 @@ export function analysePrintability(
     findings.push({
       code: 'steep-overhang',
       severity,
-      summary: `有 ${(overhang.ratio * 100).toFixed(1)}% 的表面積屬於超過 ${options.overhangThresholdDegrees}° 的朝下懸空`,
+      summary: `${(overhang.ratio * 100).toFixed(1)}% of the surface area is downward-facing overhang steeper than ${options.overhangThresholdDegrees}°`,
       detail:
-        `最陡處達 ${overhang.maxDegrees.toFixed(1)}°（90° 等於完全水平的天花板）。` +
-        '先考慮換擺放方向；方向無解時才開支撐。',
+        `The steepest point reaches ${overhang.maxDegrees.toFixed(1)}° (90° is a perfectly horizontal ceiling). ` +
+        'Try a different orientation first; enable support only when no orientation works.',
       relatedParameters: [
         'enable_support',
         'support_type',
@@ -127,8 +133,8 @@ export function analysePrintability(
     findings.push({
       code: 'small-footprint',
       severity: 'warning',
-      summary: `底面積僅約 ${footprint.toFixed(1)} mm²，佔投影面積 ${(footprintRatio * 100).toFixed(1)}%`,
-      detail: '接觸面小的高件在列印中容易被噴頭撞倒或翹起。',
+      summary: `Bed contact area is only about ${footprint.toFixed(1)} mm², ${(footprintRatio * 100).toFixed(1)}% of the projected area`,
+      detail: 'Tall parts with a small contact area are easily knocked over by the nozzle or lift off the bed during printing.',
       relatedParameters: ['brim_type', 'brim_width', 'hot_plate_temp_initial_layer'],
     });
   }
@@ -139,9 +145,10 @@ export function analysePrintability(
     findings.push({
       code: 'tall-and-narrow',
       severity: 'note',
-      summary: `高寬比約 ${aspect.toFixed(1)}:1`,
+      summary: `Height-to-width ratio is about ${aspect.toFixed(1)}:1`,
       detail:
-        '細高件在高速移動時會晃動，造成上半部振紋甚至斷裂。降低外牆速度與加速度會有明顯改善。',
+        'Tall, slender parts wobble during fast moves, causing ringing on the upper half or even breakage. ' +
+        'Lowering outer wall speed and acceleration helps noticeably.',
       relatedParameters: ['outer_wall_speed', 'default_acceleration', 'brim_type'],
     });
   }
@@ -151,10 +158,11 @@ export function analysePrintability(
     findings.push({
       code: 'thin-feature',
       severity: 'warning',
-      summary: `最小整體尺寸 ${minDimension.toFixed(2)} mm 不到兩條擠出線寬（${(options.lineWidthMm * 2).toFixed(2)} mm）`,
+      summary: `Smallest overall dimension ${minDimension.toFixed(2)} mm is less than two extrusion line widths (${(options.lineWidthMm * 2).toFixed(2)} mm)`,
       detail:
-        '這種厚度切片器可能整段跳過不印。' +
-        '注意這只檢查了整體外框；模型內部的薄壁必須實際切片才看得出來，本檢查不涵蓋。',
+        'At this thickness the slicer may skip the whole section. ' +
+        'Note that this only checks the overall bounding box; thin walls inside the model only show up ' +
+        'after actually slicing, and this check does not cover them.',
       relatedParameters: ['line_width', 'detect_thin_wall', 'layer_height'],
     });
   }
@@ -164,9 +172,10 @@ export function analysePrintability(
     findings.push({
       code: 'large-flat-area',
       severity: 'note',
-      summary: `底面接觸面積大（約 ${(flatArea * footprintRatio).toFixed(0)} mm²）`,
+      summary: `Large bed contact area (about ${(flatArea * footprintRatio).toFixed(0)} mm²)`,
       detail:
-        '大面積底面的收縮應力會集中在四角，是翹邊的典型形狀。高收縮材料要特別注意。',
+        'Shrinkage stress on a large flat bottom concentrates at the corners; this is the classic shape for warping. ' +
+        'Take particular care with high-shrinkage materials.',
       relatedParameters: ['brim_type', 'hot_plate_temp_initial_layer', 'fan_max_speed', 'draft_shield'],
     });
   }
@@ -196,33 +205,36 @@ function floatingFinding(floating: readonly FloatingBody[]): PrintabilityFinding
   const lines = floating.map((body) => {
     const where =
       body.gapMm === undefined || body.nearestBody === undefined
-        ? '附近沒有其他實體'
-        : `和「${body.nearestBody}」之間有 ${body.gapMm.toFixed(3)} mm 的縫`;
-    return `「${body.name}」最低點離板 ${body.liftMm.toFixed(2)} mm，${where}`;
+        ? 'no other solid nearby'
+        : `with a ${body.gapMm.toFixed(3)} mm gap to "${body.nearestBody}"`;
+    return `"${body.name}" has its lowest point ${body.liftMm.toFixed(2)} mm above the plate, ${where}`;
   });
 
   const advice = allSeams
-    ? `這些縫都在 ${SEAM_GAP_MM} mm 以內，多半是建模時沒接上（Tinkercad 格點吸附差一格就是 1 mm）。` +
-      '若真是如此，只開支撐是錯的修法：支撐會填進縫裡，拆掉後兩塊就分家；' +
-      '正解是回建模軟體把零件移過去或拉長，讓兩者重疊 0.5 mm 以上，再合併群組（Tinkercad 是 Group）。' +
-      `${SEAM_GAP_MM} mm 只是經驗門檻，不是判定：如果這是刻意留的活動間隙（列印即組裝的籠中球、關節），` +
-      '千萬別把縫補起來，那塊照樣需要支撐，或改設計讓它落地。請先確認設計意圖。'
-    : '寬縫的那幾塊是懸在空中的，需要開支撐或換擺放方向讓它有東西可以站；' +
+    ? `These gaps are all within ${SEAM_GAP_MM} mm, so the parts were most likely never joined while modelling ` +
+      '(one Tinkercad grid-snap step off is exactly 1 mm). ' +
+      'If so, simply enabling support is the wrong fix: the support fills the gap, and once it is removed the two pieces come apart. ' +
+      'The real fix is to go back to the modelling software, move or stretch the part so the two overlap by at least 0.5 mm, ' +
+      'then merge them (Group in Tinkercad). ' +
+      `${SEAM_GAP_MM} mm is only a rule of thumb, not a verdict: if this is an intentional moving clearance ` +
+      '(a print-in-place ball in a cage, a joint), do not close the gap; that piece still needs support, ' +
+      'or a design change so it rests on the plate. Confirm the design intent first.'
+    : 'The pieces with wide gaps are hanging in mid-air and need support, or a different orientation, so they have something to stand on.' +
       (seams.length > 0
-        ? `另外 ${seams.length} 塊的縫在 ${SEAM_GAP_MM} mm 以內，多半是建模沒接上（要回建模軟體補，不是開支撐），` +
-          '除非那是刻意留的活動間隙。'
+        ? ` Another ${seams.length} piece(s) have gaps within ${SEAM_GAP_MM} mm and were most likely never joined while modelling ` +
+          '(fix that in the modelling software rather than enabling support), unless it is an intentional moving clearance.'
         : '');
 
   return {
     code: 'floating-part',
     severity: 'blocker',
     summary:
-      `有 ${floating.length} 塊實體沒有接到列印板` +
-      (Number.isFinite(narrowest) ? `（最窄的縫 ${narrowest.toFixed(3)} mm）` : ''),
+      `${floating.length} solid(s) do not reach the plate` +
+      (Number.isFinite(narrowest) ? ` (narrowest gap ${narrowest.toFixed(3)} mm)` : ''),
     detail:
-      `${lines.join('；')}。${advice}` +
-      'Bambu Studio 對這種情況報「Levitating objects cannot be printed without supports」或「floating regions」。' +
-      '縫寬是模型原始尺寸，在 Studio 裡縮放後會等比例變化。',
+      `${lines.join('; ')}. ${advice}` +
+      ' Bambu Studio reports this as "Levitating objects cannot be printed without supports" or "floating regions".' +
+      ' Gap widths are in the model\'s original dimensions and scale proportionally if the model is scaled in Studio.',
     relatedParameters: allSeams ? [] : ['enable_support', 'support_type'],
   };
 }
@@ -241,14 +253,15 @@ function severityRank(severity: PrintabilityFinding['severity']): number {
 type OverhangMeasurement = { readonly ratio: number; readonly maxDegrees: number };
 
 /**
- * 計算朝下且陡於門檻的表面積佔比。
+ * Compute the fraction of surface area that faces downward and is steeper than the threshold.
  *
- * 對單位法向量 n，朝下時 n.z < 0，與垂直面的夾角為 asin(-n.z)：
- * n.z = 0（垂直牆）得 0°，n.z = -1（水平天花板）得 90°。
+ * For a unit normal n, a downward face has n.z < 0 and its angle from vertical is asin(-n.z):
+ * n.z = 0 (vertical wall) gives 0°, n.z = -1 (horizontal ceiling) gives 90°.
  *
- * 貼在熱床上的底面雖然也是「朝下的水平面」，但它直接躺在列印平台上不需要支撐，
- * 所以整個三角形都落在最低層內時排除。少了這個判斷，一個單純的方塊會被報成
- * 六分之一表面積需要支撐 —— 那是錯的。
+ * The bottom face resting on the heated bed is also a "downward horizontal face", but it lies
+ * directly on the plate and needs no support, so triangles lying entirely within the lowest
+ * layer are excluded. Without this check a plain cube would be reported as needing support on
+ * one sixth of its surface area, which is wrong.
  */
 const BED_CONTACT_EPSILON = 1e-3;
 
@@ -285,10 +298,12 @@ function measureOverhang(
 }
 
 /**
- * 估算與熱床接觸的面積：取最低點往上一層高度內、朝下的三角形。
+ * Estimate the area in contact with the heated bed: downward-facing triangles within one
+ * layer height above the lowest point.
  *
- * 這是投影近似而不是精確的首層截面；用於判斷「接觸面夠不夠大」這種量級問題已經足夠，
- * 但不能拿來當精確的首層面積。
+ * This is a projection approximation, not an exact first-layer cross-section; it is good
+ * enough for order-of-magnitude questions like "is the contact area large enough", but must
+ * not be used as the exact first-layer area.
  */
 function measureFootprintArea(
   triangles: readonly Triangle[],
@@ -302,7 +317,7 @@ function measureFootprintArea(
     if (maxZ > threshold) continue;
     const normal = faceNormal(triangle);
     if (normal === undefined || normal.z >= -0.5) continue;
-    // 投影到 XY 平面。
+    // Project onto the XY plane.
     area += triangleArea(triangle) * Math.abs(normal.z);
   }
 

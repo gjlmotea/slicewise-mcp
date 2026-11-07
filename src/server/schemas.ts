@@ -1,19 +1,19 @@
 import { z } from 'zod';
 
 /**
- * 工具的輸入與輸出 schema。
+ * Input and output schemas for the tools.
  *
- * MCP SDK 的 `registerTool` 收的是 ZodRawShape（欄位物件），不是 `z.object(...)`。
+ * The MCP SDK's `registerTool` takes a ZodRawShape (an object of fields), not a `z.object(...)`.
  */
 
 const presetKind = z.enum(['machine', 'process', 'filament']);
 
-/** preset 值：單值或每個 extruder 一項的陣列。 */
+/** A preset value: a single value, or an array with one entry per extruder. */
 const presetValue = z.union([z.string(), z.array(z.string())]);
 
 const overrides = z
   .record(z.string(), presetValue)
-  .describe('要覆寫的參數，key 是 BambuStudio 的設定名稱（例如 layer_height、sparse_infill_density）。');
+  .describe('Parameters to override; each key is a BambuStudio setting name (e.g. layer_height, sparse_infill_density).');
 
 export const getStatusInputSchema = {};
 
@@ -43,11 +43,11 @@ export const statusOutputSchema = {
 
 export const listPresetsInputSchema = {
   kind: presetKind,
-  search: z.string().optional().describe('名稱子字串過濾，不分大小寫。'),
+  search: z.string().optional().describe('Filter by a case-insensitive substring of the preset name.'),
   includeAbstract: z
     .boolean()
     .optional()
-    .describe('是否包含只供繼承、無法在 UI 選用的中間層 preset。預設 false。'),
+    .describe('Whether to include intermediate presets that exist only to be inherited from and cannot be selected in the UI. Defaults to false.'),
   limit: z.number().int().min(1).max(200).optional(),
 };
 
@@ -72,21 +72,21 @@ export const resolvePresetInputSchema = {
   keys: z
     .array(z.string())
     .optional()
-    .describe('只回傳這些參數。不給就回全部（process 約 200 個 key）。'),
+    .describe('Return only these parameters. Omit to return all of them (a process preset has about 200 keys).'),
 };
 
 export const resolvePresetOutputSchema = {
   name: z.string(),
   kind: presetKind,
   origin: z.enum(['system', 'user']),
-  inheritanceChain: z.array(z.string()).describe('由葉到根的繼承鏈。'),
+  inheritanceChain: z.array(z.string()).describe('The inheritance chain, from the leaf preset to the root.'),
   settingCount: z.number(),
   settings: z.record(z.string(), presetValue),
   provenance: z
     .record(z.string(), z.string())
     .describe(
-      '每個 key 實際來自繼承鏈的哪一層。機器 G-code 可能來自該層的模板條目，' +
-        '名稱形如「<preset> template machine_start_gcode」。',
+      'Which level of the inheritance chain each key actually comes from. Machine G-code may come from that level\'s template entry, ' +
+        'named like "<preset> template machine_start_gcode".',
     ),
 };
 
@@ -145,13 +145,13 @@ export const describeParametersOutputSchema = {
       related: z.array(z.string()),
     }),
   ),
-  unknown: z.array(z.string()).describe('catalog 未收錄的 key。'),
+  unknown: z.array(z.string()).describe('Keys that are not in the parameter catalog.'),
 };
 
 export const diagnoseInputSchema = {
-  symptom: z.string().optional().describe('用自然語言描述現象，例如「底部一圈胖出來」。'),
-  symptomId: z.string().optional().describe('已知症狀代號，跳過文字比對。'),
-  material: z.string().optional().describe('材料，例如 PLA／ABS／PETG／TPU；有對應註記時會一併回傳。'),
+  symptom: z.string().optional().describe('The symptom in natural language, e.g. "the bottom layer bulges outward" (elephant\'s foot). Chinese descriptions are matched too.'),
+  symptomId: z.string().optional().describe('A known symptom id; skips text matching.'),
+  material: z.string().optional().describe('The material, e.g. PLA / ABS / PETG / TPU; a material-specific note is returned when one exists.'),
 };
 
 export const diagnoseOutputSchema = {
@@ -184,18 +184,18 @@ export const planSettingsInputSchema = {
   goal: z
     .string()
     .optional()
-    .describe('用自然語言說你要什麼，例如「不要印壞、慢慢印高品質」或「趕時間」。'),
+    .describe('What you want, in natural language, e.g. "don\'t let it fail, print slowly at high quality" or "in a hurry". Chinese goals are matched too.'),
   goalId: z
     .enum(['safe', 'fast', 'strong', 'surface', 'economical'])
     .optional()
-    .describe('直接指定目標，跳過文字比對。'),
+    .describe('Specify the goal directly; skips text matching.'),
   modelPath: z
     .string()
     .optional()
-    .describe('給了模型就會先做可列印性分析，依幾何追加條件式調整（例如底面積過小時加寬 brim）。'),
-  processPreset: z.string().optional().describe('不給就用 Bambu Studio 目前選用的。'),
+    .describe('If a model is given, a printability analysis runs first and conditional adjustments are added based on the geometry (e.g. a wider brim when the base area is too small).'),
+  processPreset: z.string().optional().describe('Defaults to the preset currently selected in Bambu Studio.'),
   filamentPreset: z.string().optional(),
-  material: z.string().optional().describe('PLA／PETG／ABS／ASA／TPU；有對應註記時一併回傳。'),
+  material: z.string().optional().describe('PLA / PETG / ABS / ASA / TPU; a material-specific note is returned when one exists.'),
 };
 
 export const planSettingsOutputSchema = {
@@ -221,12 +221,12 @@ export const planSettingsOutputSchema = {
       cost: z.string(),
       parameterLabel: z.string().optional(),
       unit: z.string().optional(),
-      currentValue: presetValue.optional().describe('目前 preset 裡的值。'),
+      currentValue: presetValue.optional().describe('The value in the current preset.'),
       valueShape: z
         .enum(['scalar', 'per-extruder', 'unknown'])
-        .describe('per-extruder 的參數要用陣列覆寫，塞純量會落空。'),
+        .describe('Per-extruder parameters must be overridden with an array; a scalar is silently not applied.'),
       ownedBy: z.string().optional(),
-      triggeredBy: z.string().optional().describe('由哪一項可列印性發現觸發；空的代表是該目標的基本調整。'),
+      triggeredBy: z.string().optional().describe('Which printability finding triggered this move; empty means it is a base adjustment for the goal.'),
       triggerReason: z.string().optional(),
     }),
   ),
@@ -246,16 +246,16 @@ export const optimizePrintInPlaceInputSchema = {
   name: z
     .string()
     .optional()
-    .describe('新使用者 preset 名稱。不給就以來源名稱加上「自動穩定版」。'),
+    .describe('Name of the new user preset. Defaults to the source preset name with an auto-stabilised suffix appended.'),
   processPreset: z
     .string()
     .optional()
-    .describe('來源 process preset；不給就用 Bambu Studio 目前選用的。可指定既有使用者 preset。'),
+    .describe('The source process preset; defaults to the one currently selected in Bambu Studio. An existing user preset may be given.'),
   includeBrimEars: z
     .boolean()
     .optional()
-    .describe('是否一併開啟 5 mm Brim Ears。預設 false，因為活動間隙必須先看第一層預覽。'),
-  overwrite: z.boolean().optional().describe('同名 preset 已存在時是否取代。預設 false。'),
+    .describe('Whether to also enable 5 mm Brim Ears. Defaults to false, because the moving clearances must be checked in the first-layer preview first.'),
+  overwrite: z.boolean().optional().describe('Whether to replace a preset with the same name if one already exists. Defaults to false.'),
 };
 
 export const optimizePrintInPlaceOutputSchema = {
@@ -281,11 +281,11 @@ export const optimizePrintInPlaceOutputSchema = {
 };
 
 export const saveUserPresetInputSchema = {
-  name: z.string().describe('新 preset 的名稱，會顯示在 Bambu Studio 的下拉選單。'),
+  name: z.string().describe('Name of the new preset; it appears in the Bambu Studio dropdown.'),
   kind: presetKind,
-  inherits: z.string().describe('要繼承的原廠 preset 名稱。'),
+  inherits: z.string().describe('Name of the system (vendor) preset to inherit from.'),
   overrides,
-  overwrite: z.boolean().optional().describe('同名已存在時是否取代。預設 false。'),
+  overwrite: z.boolean().optional().describe('Whether to replace an existing preset with the same name. Defaults to false.'),
 };
 
 export const saveUserPresetOutputSchema = {
@@ -297,7 +297,7 @@ export const saveUserPresetOutputSchema = {
 };
 
 export const sliceInputSchema = {
-  modelPath: z.string().describe('模型檔絕對路徑，必須位於允許的模型目錄內。'),
+  modelPath: z.string().describe('Absolute path to the model file; it must be inside an allowed model directory.'),
   machinePreset: z.string().optional(),
   processPreset: z.string().optional(),
   filamentPresets: z.array(z.string()).optional(),
@@ -318,8 +318,8 @@ export const sliceInputSchema = {
     .array(z.string())
     .optional()
     .describe(
-      '從產物讀回這些參數實際生效的值。用來確認切片真的採用了 preset 的值，' +
-        '而不是切片器內建的預設值。',
+      'Read back the values these parameters actually took in the output. Use it to confirm the slice really used the preset values ' +
+        'rather than the slicer\'s built-in defaults.',
     ),
 };
 
@@ -335,18 +335,18 @@ export const sliceOutputSchema = {
       layerHeight: z.number(),
       modelPrintTimeSeconds: z.number().optional(),
       totalEstimatedTimeSeconds: z.number().optional(),
-      filamentGrams: z.number().optional().describe('整盤合計（含換色沖洗與擦料塔）；多色時是各色加總。'),
-      filamentLengthMm: z.number().optional().describe('整盤合計；多色時是各色加總。'),
+      filamentGrams: z.number().optional().describe('Total for the whole plate (including filament-change flushing and the prime tower); for multi-colour prints, the sum of all colours.'),
+      filamentLengthMm: z.number().optional().describe('Total for the whole plate; for multi-colour prints, the sum of all colours.'),
       filamentBreakdown: z
         .array(
           z.object({
-            filament: z.number().optional().describe('耗材槽編號（1 起算）。'),
+            filament: z.number().optional().describe('Filament slot number (1-based).'),
             grams: z.number().optional(),
             lengthMm: z.number().optional(),
           }),
         )
         .optional()
-        .describe('多色時每一色的用量；單色不回傳。'),
+        .describe('Usage per colour for multi-colour prints; omitted for single-colour prints.'),
     })
     .optional(),
   overrideAudit: z
@@ -362,7 +362,7 @@ export const sliceOutputSchema = {
   appliedSettings: z
     .record(z.string(), presetValue)
     .optional()
-    .describe('reportSettings 要求的參數在產物中的實際值。'),
+    .describe('The actual values in the output of the parameters requested by reportSettings.'),
   warnings: z.array(z.string()).optional(),
 };
 
@@ -384,28 +384,28 @@ export const inspectModelOutputSchema = {
   closed: z.boolean(),
   degenerateTriangles: z.number(),
   openEdges: z.number(),
-  format: z.enum(['stl', '3mf', 'obj']).optional().describe('實際判讀出來的格式，依內容而非副檔名。'),
+  format: z.enum(['stl', '3mf', 'obj']).optional().describe('The format actually detected, based on the content rather than the file extension.'),
   partCount: z.number().optional(),
   parts: z.array(z.object({ name: z.string(), triangleCount: z.number() })).optional(),
 };
 
 export const measureClearanceInputSchema = {
-  modelPath: z.string().describe('3MF 或 OBJ 的絕對路徑，必須位於允許的模型目錄內。'),
+  modelPath: z.string().describe('Absolute path to a 3MF or OBJ file; it must be inside an allowed model directory.'),
   minimumClearanceMm: z
     .number()
     .positive()
     .optional()
-    .describe('可靠印出的最小間隙。預設 0.15（0.4 噴頭 PLA 的實務下限）。'),
+    .describe('The smallest clearance that prints reliably. Defaults to 0.15 (the practical lower limit for PLA with a 0.4 mm nozzle).'),
   reportThresholdMm: z
     .number()
     .positive()
     .optional()
-    .describe('超過這個距離的零件配對不列入報告。預設 2 mm。'),
+    .describe('Part pairs farther apart than this are left out of the report. Defaults to 2 mm.'),
   samplingMm: z
     .number()
     .positive()
     .optional()
-    .describe('表面取樣間距，越小越準也越慢。預設 0.2 mm。'),
+    .describe('Surface sampling spacing; smaller is more accurate but slower. Defaults to 0.2 mm.'),
 };
 
 export const measureClearanceOutputSchema = {
@@ -447,13 +447,13 @@ export const checkPrintabilityInputSchema = {
   buildVolume: z
     .object({ x: z.number().positive(), y: z.number().positive(), z: z.number().positive() })
     .optional()
-    .describe('預設為 Bambu Lab P1S／X1C 的 256×256×256 mm。'),
+    .describe('Defaults to 256×256×256 mm (Bambu Lab P1S / X1C).'),
   overhangThresholdDegrees: z
     .number()
     .min(0)
     .max(90)
     .optional()
-    .describe('與垂直面的夾角；0° 是垂直牆，90° 是水平天花板。預設 45。'),
+    .describe('Angle from vertical; 0° is a vertical wall, 90° is a horizontal ceiling. Defaults to 45.'),
   lineWidthMm: z.number().positive().optional(),
 };
 
@@ -475,14 +475,14 @@ export const checkPrintabilityOutputSchema = {
       z.object({
         name: z.string(),
         partNames: z.array(z.string()),
-        liftMm: z.number().describe('這塊實體最低點離列印板的高度。'),
+        liftMm: z.number().describe('Height of this body\'s lowest point above the plate.'),
         nearestBody: z.string().optional(),
-        gapMm: z.number().optional().describe('與最近實體之間的縫寬（模型原始尺寸）。'),
+        gapMm: z.number().optional().describe('Width of the gap to the nearest body (in the model\'s original dimensions).'),
         gapAt: z.object({ x: z.number(), y: z.number(), z: z.number() }).optional(),
       }),
     )
     .optional()
-    .describe('沒有接到列印板的實體。縫在 2 mm 內通常是建模沒接上，要回建模軟體補，開支撐會讓它印完分家。'),
+    .describe('Bodies that do not touch the plate. A gap within 2 mm usually means the parts were not joined during modelling and must be fixed in the modelling software; turning on support would make them print as separate pieces.'),
   findings: z.array(
     z.object({
       code: z.string(),
@@ -513,9 +513,9 @@ const shape = z.discriminatedUnion('kind', [
 ]);
 
 export const composeModelInputSchema = {
-  name: z.string().min(1).describe('輸出檔名（會自動補 .3mf）與物件名稱。不得包含路徑分隔符。'),
-  basePath: z.string().describe('本體 STL 的路徑，必須位於允許的模型目錄內。'),
-  baseName: z.string().optional().describe('本體零件的顯示名稱，預設 body。'),
+  name: z.string().min(1).describe('Output file name (.3mf is appended automatically) and object name. Must not contain path separators.'),
+  basePath: z.string().describe('Path to the base body STL; it must be inside an allowed model directory.'),
+  baseName: z.string().optional().describe('Display name of the base body part. Defaults to body.'),
   parts: z
     .array(
       z.object({
@@ -523,22 +523,22 @@ export const composeModelInputSchema = {
         subtype: z
           .enum(['negative_part', 'modifier_part', 'support_blocker', 'support_enforcer', 'normal_part'])
           .describe(
-            'negative_part 挖除、modifier_part 局部參數區、support_blocker／support_enforcer 控制支撐、' +
-              'normal_part 追加實體。BambuStudio 對認不得的字串會靜默當成 normal_part，所以只接受這五個。',
+            'negative_part cuts material away, modifier_part is a region with local settings, support_blocker / support_enforcer control support, ' +
+              'normal_part adds a solid. BambuStudio silently treats any unrecognised string as normal_part, so only these five are accepted.',
           ),
         shape,
-        position: vec3.optional().describe('原始形狀的中心點，與本體同一個座標系。stl 形狀忽略此欄位。'),
+        position: vec3.optional().describe('Centre of the primitive shape, in the same coordinate system as the base body. Ignored for stl shapes.'),
         settings: z
           .record(z.string(), presetValue)
           .optional()
-          .describe('零件層級設定，只有 modifier_part 會生效。'),
+          .describe('Per-part settings; honoured only for modifier_part.'),
       }),
     )
     .min(1),
   plateCentre: z
     .object({ x: z.number(), y: z.number() })
     .optional()
-    .describe('物件在列印板上的落點，預設 256×256 板的中心 (128, 128)。'),
+    .describe('Where the object lands on the plate. Defaults to the centre of a 256×256 plate (128, 128).'),
 };
 
 export const composeModelOutputSchema = {
@@ -558,7 +558,7 @@ export const composeModelOutputSchema = {
 };
 
 export const inspectProjectInputSchema = {
-  projectPath: z.string().describe('Bambu 專案 3MF 的路徑。'),
+  projectPath: z.string().describe('Path to a Bambu project 3MF.'),
 };
 
 export const inspectProjectOutputSchema = {
@@ -584,7 +584,7 @@ export const searchModelsInputSchema = {
   sources: z
     .array(z.string())
     .optional()
-    .describe('限定平台；不給就全查。可用值見 bambu_get_status 的 catalogs。'),
+    .describe('Restrict to these platforms; omit to query all. See catalogs in bambu_get_status for the available values.'),
   limit: z.number().int().min(1).max(30).optional(),
 };
 

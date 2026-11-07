@@ -11,19 +11,20 @@ import { defaultDataDir } from '../dist/adapters/node-preset-store.js';
 import { defaultExecutablePath } from '../dist/adapters/bambu-studio-cli.js';
 
 /**
- * 範例：在一片固定片上挖兩個 M3 通孔。
+ * Example: cut two M3 clearance holes into a mounting plate.
  *
- * 這支腳本示範完整流程，也順便當作「孔真的挖出來了」的量測驗證：
- * 產生檔案不算數，要能從切片產物的 G-code 量出實際孔徑。
+ * This script demonstrates the full workflow and doubles as a measured check that the holes
+ * really were cut: producing a file proves nothing; the actual hole diameter has to be
+ * measurable from the G-code in the sliced output.
  *
- * M3 尺寸依 ISO 273：
- *   - 通孔（中等級 medium fit）Ø3.4 mm ← 本例採用
- *   - 通孔（精級 fine fit）    Ø3.2 mm
- *   - 自攻／攻牙入塑膠         Ø2.5 mm
- *   - 熱熔銅套                 依銅套規格，常見 Ø4.0 mm
+ * M3 sizes per ISO 273:
+ *   - Clearance hole (medium fit)    Ø3.4 mm  <- used in this example
+ *   - Clearance hole (fine fit)      Ø3.2 mm
+ *   - Self-tapping / tapped plastic  Ø2.5 mm
+ *   - Heat-set brass insert          per insert spec, commonly Ø4.0 mm
  *
- * 需要本機安裝 Bambu Studio。用法：
- *   node scripts/example-m3-hole.mjs [--out <目錄>]
+ * Requires Bambu Studio installed locally. Usage:
+ *   node scripts/example-m3-hole.mjs [--out <dir>]
  */
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -35,17 +36,17 @@ function arg(name, fallback) {
 
 const slicerPath = arg('slicer', defaultExecutablePath());
 if (!existsSync(slicerPath)) {
-  console.error(`找不到 Bambu Studio 執行檔：${slicerPath}`);
+  console.error(`Bambu Studio executable not found: ${slicerPath}`);
   process.exit(2);
 }
 
 const workDir = arg('out', join(projectRoot, '.agent-tmp', 'm3-example'));
 mkdirSync(workDir, { recursive: true });
 
-// ── 幾何參數 ─────────────────────────────────────────────────────────────
+// ── Geometry parameters ──────────────────────────────────────────────────
 const PLATE = { x: 40, y: 20, z: 5 };
-const HOLE_DIAMETER = 3.4; // M3 中等級通孔
-const HOLE_SPACING = 24; // 兩孔中心距
+const HOLE_DIAMETER = 3.4; // M3 medium-fit clearance hole
+const HOLE_SPACING = 24; // centre-to-centre distance between the two holes
 const HOLE_CENTRES = [
   { x: PLATE.x / 2 - HOLE_SPACING / 2, y: PLATE.y / 2 },
   { x: PLATE.x / 2 + HOLE_SPACING / 2, y: PLATE.y / 2 },
@@ -76,12 +77,12 @@ try {
   const machine = arg('machine', status.currentSelection.machine);
   const process_ = arg('process', status.currentSelection.process);
   const filament = arg('filament', status.currentSelection.filaments?.[0]);
-  assert.ok(machine && process_ && filament, '找不到可用的 preset 組合');
+  assert.ok(machine && process_ && filament, 'no usable preset combination found');
 
-  console.log(`固定片 ${PLATE.x}×${PLATE.y}×${PLATE.z} mm，兩個 Ø${HOLE_DIAMETER} mm 通孔，中心距 ${HOLE_SPACING} mm`);
-  console.log(`使用 ${machine} ／ ${process_} ／ ${filament}\n`);
+  console.log(`Plate ${PLATE.x}×${PLATE.y}×${PLATE.z} mm, two Ø${HOLE_DIAMETER} mm clearance holes, ${HOLE_SPACING} mm apart`);
+  console.log(`Using ${machine} / ${process_} / ${filament}\n`);
 
-  // ── 1. 組裝 ────────────────────────────────────────────────────────────
+  // ── 1. Compose ─────────────────────────────────────────────────────────
   const composed = await call('bambu_compose_model', {
     name: 'm3-bracket',
     basePath: join(workDir, 'plate.stl'),
@@ -92,29 +93,29 @@ try {
       shape: {
         kind: 'cylinder',
         diameter: HOLE_DIAMETER,
-        // 比板厚長，確保上下都完全穿透。
+        // Longer than the plate is thick, so it fully cuts through top and bottom.
         height: PLATE.z * 3,
         segments: 64,
       },
       position: { x: centre.x, y: centre.y, z: PLATE.z / 2 },
     })),
   });
-  assert.ok(composed.outputPath, `組裝失敗：${JSON.stringify(composed)}`);
+  assert.ok(composed.outputPath, `compose failed: ${JSON.stringify(composed)}`);
 
-  console.log(`組出 ${composed.outputPath}`);
+  console.log(`Composed ${composed.outputPath}`);
   for (const part of composed.parts) {
-    console.log(`  ${part.subtype.padEnd(14)} ${part.name.padEnd(11)} ${part.triangleCount} 面，相交：${part.intersectsBody}`);
+    console.log(`  ${part.subtype.padEnd(14)} ${part.name.padEnd(11)} ${part.triangleCount} faces, intersects: ${part.intersectsBody}`);
   }
-  assert.ok(composed.parts.slice(1).every((p) => p.intersectsBody), '兩個孔都必須與板子相交');
+  assert.ok(composed.parts.slice(1).every((p) => p.intersectsBody), 'both holes must intersect the plate');
 
-  // ── 2. 讀回 ────────────────────────────────────────────────────────────
+  // ── 2. Read back ───────────────────────────────────────────────────────
   const structure = await call('bambu_inspect_project', { projectPath: composed.outputPath });
   const parts = structure.objects[0].parts;
-  console.log(`\n讀回：${parts.map((p) => `${p.name}=${p.subtype}`).join('、')}`);
+  console.log(`\nRead back: ${parts.map((p) => `${p.name}=${p.subtype}`).join(', ')}`);
   assert.equal(parts.filter((p) => p.subtype === 'negative_part').length, 2);
   assert.ok(parts.every((p) => p.recognised));
 
-  // ── 3. 切片 ────────────────────────────────────────────────────────────
+  // ── 3. Slice ───────────────────────────────────────────────────────────
   const sliced = await call('bambu_slice', {
     modelPath: composed.outputPath,
     machinePreset: machine,
@@ -122,47 +123,49 @@ try {
     filamentPresets: [filament],
     reportSettings: ['line_width', 'inner_wall_line_width', 'xy_hole_compensation'],
   });
-  assert.equal(sliced.ok, true, `切片失敗：${sliced.reason ?? ''}`);
+  assert.equal(sliced.ok, true, `slicing failed: ${sliced.reason ?? ''}`);
   console.log(
-    `\n切片：${sliced.stats.layerCount} 層、${sliced.stats.filamentGrams} g、` +
-      `線寬 ${sliced.appliedSettings.line_width}、孔徑補償 ${sliced.appliedSettings.xy_hole_compensation}`,
+    `\nSliced: ${sliced.stats.layerCount} layers, ${sliced.stats.filamentGrams} g, ` +
+      `line width ${sliced.appliedSettings.line_width}, hole compensation ${sliced.appliedSettings.xy_hole_compensation}`,
   );
 
-  // ── 4. 從 G-code 量實際孔徑 ────────────────────────────────────────────
+  // ── 4. Measure the actual hole diameter from the G-code ─────────────────
   //
-  // 產生檔案不算數。切片器繞著孔走的那圈路徑，中心線距孔心約等於
-  // 孔半徑 + 半個線寬，所以反推得到的就是切片器眼中的實際孔徑。
+  // Producing a file proves nothing. The centreline of the loop the slicer runs around a hole
+  // sits roughly hole radius + half a line width from the hole centre, so working backwards
+  // gives the hole diameter as the slicer actually sees it.
   const holes = measureHoles(readGcodeFromProduct(sliced.outputPath), PLATE.z / 2);
-  assert.equal(holes.length, 2, `應該量到兩個孔，實際 ${holes.length} 個`);
+  assert.equal(holes.length, 2, `expected to measure two holes, got ${holes.length}`);
 
-  console.log('\n實際孔徑（由 G-code 的 G2／G3 圓弧幾何反推）：');
+  console.log('\nActual hole diameters (derived from the G2/G3 arc geometry in the G-code):');
   for (const [index, hole] of holes.entries()) {
     const deviation = hole.diameter - HOLE_DIAMETER;
     console.log(
-      `  孔 ${index + 1}  圓心 (${hole.cx.toFixed(2)}, ${hole.cy.toFixed(2)})  ` +
-        `Ø${hole.diameter.toFixed(3)} mm（設計 Ø${HOLE_DIAMETER}，差 ${deviation >= 0 ? '+' : ''}${deviation.toFixed(3)}）`,
+      `  Hole ${index + 1}  centre (${hole.cx.toFixed(2)}, ${hole.cy.toFixed(2)})  ` +
+        `Ø${hole.diameter.toFixed(3)} mm (design Ø${HOLE_DIAMETER}, deviation ${deviation >= 0 ? '+' : ''}${deviation.toFixed(3)})`,
     );
-    assert.ok(Math.abs(deviation) < 0.05, `孔 ${index + 1} 偏差過大：${deviation.toFixed(3)} mm`);
-    assert.ok(hole.diameter > 3.0, 'M3 通孔必須大於螺絲外徑 3.0 mm');
+    assert.ok(Math.abs(deviation) < 0.05, `hole ${index + 1} deviates too much: ${deviation.toFixed(3)} mm`);
+    assert.ok(hole.diameter > 3.0, 'an M3 clearance hole must be larger than the 3.0 mm screw diameter');
   }
 
   const spacing = Math.hypot(holes[1].cx - holes[0].cx, holes[1].cy - holes[0].cy);
-  console.log(`  中心距 ${spacing.toFixed(3)} mm（設計 ${HOLE_SPACING}）`);
-  assert.ok(Math.abs(spacing - HOLE_SPACING) < 0.05, '孔距不符');
+  console.log(`  Centre distance ${spacing.toFixed(3)} mm (design ${HOLE_SPACING})`);
+  assert.ok(Math.abs(spacing - HOLE_SPACING) < 0.05, 'hole spacing does not match');
 
   console.log(
-    '\n刀路孔徑與模型完全一致（誤差 <0.01 mm）。實際印出來會略小是材料收縮與擠出行為造成的，\n' +
-      '那是 xy_hole_compensation 要處理的問題 —— 先印一個校正件量測實際偏差，再決定補償值。',
+    '\nToolpath hole diameters match the model exactly (error <0.01 mm). Printed holes come out slightly smaller\n' +
+      'because of material shrinkage and extrusion behaviour; that is what xy_hole_compensation is for.\n' +
+      'Print a calibration piece first, measure the actual deviation, then choose the compensation value.',
   );
 
-  console.log(`\n✅ 完成。用 Bambu Studio 開 ${composed.outputPath} 可以看到兩個挖除體零件。`);
+  console.log(`\nDone. Open ${composed.outputPath} in Bambu Studio to see the two negative parts.`);
 } finally {
   await client.close();
 }
 
-// ── 工具 ─────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────
 
-/** 產生一片長方形板的 binary STL，座標從 (0,0,0) 起算。 */
+/** Builds a binary STL of a rectangular plate, with coordinates starting at (0,0,0). */
 function buildPlateStl(size) {
   const v = [
     [0, 0, 0], [size.x, 0, 0], [size.x, size.y, 0], [0, size.y, 0],
@@ -187,10 +190,10 @@ function buildPlateStl(size) {
   return buffer;
 }
 
-/** 從 .gcode.3mf 產物取出第一盤的 G-code。 */
+/** Extracts the first plate's G-code from a .gcode.3mf output. */
 function readGcodeFromProduct(path) {
   const buffer = readFileSync(path);
-  // 走 central directory 找 plate_1.gcode。
+  // Walk the zip central directory to find plate_1.gcode.
   let eocd = buffer.length - 22;
   while (eocd >= 0 && buffer.readUInt32LE(eocd) !== 0x06054b50) eocd -= 1;
   const count = buffer.readUInt16LE(eocd + 10);
@@ -214,21 +217,23 @@ function readGcodeFromProduct(path) {
     }
     cursor += 46 + nameLength + extraLength + commentLength;
   }
-  throw new Error('產物裡找不到 plate_1.gcode');
+  throw new Error('plate_1.gcode not found in the output');
 }
 
 /**
- * 從 G-code 量出圓孔的實際孔徑。
+ * Measures the actual diameter of round holes from the G-code.
  *
- * BambuStudio 預設開啟 `enable_arc_fitting`，圓形輪廓會輸出成 G2／G3 圓弧而不是一堆短線段。
- * 圓弧指令的 I／J 是圓心相對目前位置的偏移，所以圓心與半徑可以直接算出來 ——
- * 這比取樣路徑上的點再擬合準確得多。
+ * BambuStudio enables `enable_arc_fitting` by default, so round outlines are emitted as G2/G3 arcs
+ * rather than many short line segments. An arc command's I/J is the offset of the arc centre from
+ * the current position, so the centre and radius can be computed directly, which is far more
+ * accurate than sampling points along the path and fitting a circle.
  *
- * 孔壁那圈路徑的 feature 是 `Outer wall`（貼著實體表面的那一圈），
- * 其中心線位於距孔心「孔半徑 + 半個線寬」處，所以孔徑 = 2 ×（半徑 − 半線寬）。
+ * The loop along the hole wall has the feature `Outer wall` (the loop touching the solid surface);
+ * its centreline lies "hole radius + half a line width" from the hole centre, so
+ * hole diameter = 2 × (radius − half line width).
  *
- * 不預設模型落在列印板哪個位置：圓孔自己會以「同心圓弧」的形式現身，
- * 用不著知道 build item 的位移量。
+ * No assumption is made about where the model sits on the plate: each round hole shows up as
+ * concentric arcs on its own, so the build item's translation is not needed.
  */
 function measureHoles(gcode, targetZ) {
   const byLayer = new Map();
@@ -272,7 +277,7 @@ function measureHoles(gcode, targetZ) {
     if (ny) y = Number.parseFloat(ny[1]);
   }
 
-  // 取最接近目標高度、且有外牆圓弧的那一層。
+  // Take the layer closest to the target height that has outer-wall arcs.
   let best = null;
   for (const [key, arcs] of byLayer) {
     const layerZ = Number.parseFloat(key);
@@ -280,9 +285,9 @@ function measureHoles(gcode, targetZ) {
       best = { z: layerZ, arcs };
     }
   }
-  assert.ok(best !== null, '找不到任何外牆圓弧');
+  assert.ok(best !== null, 'no outer-wall arcs found');
 
-  // 同一個孔會由數段圓弧拼成，依圓心分群後取最小半徑（最靠近孔壁的那一圈）。
+  // One hole is made of several arc segments; group by centre and keep the smallest radius (the loop nearest the hole wall).
   const groups = new Map();
   for (const arc of best.arcs) {
     const key = `${arc.cx.toFixed(1)},${arc.cy.toFixed(1)}`;

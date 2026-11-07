@@ -25,7 +25,7 @@ function env(name: string): string | undefined {
   return value === undefined || value === '' ? undefined : value;
 }
 
-/** `BAMBU_MODEL_DIR` 允許多個目錄，以平台的 PATH 分隔符分隔。 */
+/** `BAMBU_MODEL_DIR` accepts several directories, separated by the platform's PATH delimiter. */
 function envList(name: string): readonly string[] {
   const raw = env(name);
   return raw === undefined ? [] : raw.split(delimiter).map((part) => part.trim()).filter((part) => part !== '');
@@ -65,7 +65,7 @@ async function main(): Promise<void> {
     presetCounts: status.presetCounts,
     modelRoots: status.allowedModelRoots.length,
     outputConfigured: status.outputConfigured,
-    // 祕密只記名稱不記值。
+    // Log only whether a secret is set, never its value.
     thingiverseToken: env('THINGIVERSE_TOKEN') === undefined ? 'unset' : 'set',
   });
 

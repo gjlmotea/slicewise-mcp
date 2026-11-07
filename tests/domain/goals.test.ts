@@ -17,9 +17,9 @@ function allMoves() {
   );
 }
 
-describe('目標表', () => {
-  it('每個目標都說明了優化什麼、犧牲什麼', () => {
-    // 沒有普世最佳解。不講犧牲什麼的目標等於誤導。
+describe('goal table', () => {
+  it('every goal states what it optimises for and what it trades away', () => {
+    // There is no universally best setting. A goal that does not say what it sacrifices is misleading.
     for (const goal of listGoals()) {
       expect(goal.optimisesFor.length).toBeGreaterThan(0);
       expect(goal.tradesAway.length).toBeGreaterThan(0);
@@ -27,27 +27,27 @@ describe('目標表', () => {
     }
   });
 
-  it('每個調整都有原理與代價', () => {
+  it('every adjustment has a rationale and a cost', () => {
     const bare = allMoves().filter(
       ({ move }) => move.rationale.length === 0 || move.cost.length === 0,
     );
     expect(bare).toEqual([]);
   });
 
-  it('所有調整指向的都是真實 BambuStudio 參數', () => {
-    // 參數名打錯 BambuStudio 會靜默忽略，使用者以為調了其實沒調。
+  it('every adjustment points at a real BambuStudio parameter', () => {
+    // BambuStudio silently ignores a misspelled parameter name, so the user thinks it was changed when it was not.
     const bogus = allMoves()
       .filter(({ move }) => !isKnownParameterKey(move.key))
       .map(({ goal, move }) => `${goal} -> ${move.key}`);
     expect(bogus).toEqual([]);
   });
 
-  it('goal id 唯一', () => {
+  it('goal ids are unique', () => {
     const ids = listGoals().map((goal) => goal.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('每個 concern 都有對應的中文標籤', () => {
+  it('every concern has a label', () => {
     const used = new Set(allMoves().map(({ move }) => move.concern));
     for (const concern of used) {
       expect(CONCERN_LABELS[concern]).toBeTruthy();
@@ -56,7 +56,7 @@ describe('目標表', () => {
 });
 
 describe('matchGoal', () => {
-  it('比對得到使用者實際的講法', () => {
+  it('matches how users actually phrase it in Chinese', () => {
     expect(matchGoal('不要印壞')?.id).toBe('safe');
     expect(matchGoal('慢慢印，高品質')?.id).toBe('safe');
     expect(matchGoal('避免翹起來')?.id).toBe('safe');
@@ -65,52 +65,54 @@ describe('matchGoal', () => {
     expect(matchGoal('這個要受力，不要斷')?.id).toBe('strong');
   });
 
-  it('比對得到英文', () => {
+  it('matches English', () => {
     expect(matchGoal('make it reliable, no fail')?.id).toBe('safe');
     expect(matchGoal('as fast as possible')?.id).toBe('fast');
   });
 
-  it('比對不到時回 undefined，不猜', () => {
-    // 目標猜錯的代價比症狀猜錯更大 —— 會把整組參數往反方向調。
-    expect(matchGoal('這台機器的顏色不好看')).toBeUndefined();
-    expect(matchGoal('今天天氣真好')).toBeUndefined();
+  it('returns undefined when nothing matches instead of guessing', () => {
+    // Guessing the wrong goal costs more than guessing the wrong symptom — the whole set of parameters moves the opposite way.
+    expect(matchGoal('這台機器的顏色不好看')).toBeUndefined(); // "this machine's colour looks bad"
+    expect(matchGoal('今天天氣真好')).toBeUndefined(); // "nice weather today"
   });
 
-  it('alias 至少兩個字，避免被否定句與無關詞誤觸', () => {
-    // 回歸測試：曾經用單字元 alias，「勉強」命中 strong、「不好看」命中 surface。
+  it('Chinese aliases are at least two characters so negations and unrelated words do not trigger them', () => {
+    // Regression test: single-character aliases once made 勉強 ("reluctantly") match strong and
+    // 不好看 ("looks bad") match surface.
     const short = listGoals().flatMap((goal) =>
       goal.aliases.filter((alias) => /[\u4e00-\u9fff]/.test(alias) && alias.length < 2)
         .map((alias) => `${goal.id}: ${alias}`),
     );
     expect(short).toEqual([]);
-    expect(matchGoal('這件事我勉強可以接受')).toBeUndefined();
+    expect(matchGoal('這件事我勉強可以接受')).toBeUndefined(); // "I can reluctantly accept this"
   });
 });
 
-describe('safe 目標', () => {
+describe('safe goal', () => {
   const safe = getGoal('safe')!;
 
-  it('同時涵蓋附著與碰撞兩種失敗模式', () => {
+  it('covers both the adhesion and the collision failure modes', () => {
     const concerns = new Set(safe.moves.map((move) => move.concern));
     expect(concerns.has('adhesion')).toBe(true);
     expect(concerns.has('collision')).toBe(true);
     expect(concerns.has('quality')).toBe(true);
   });
 
-  it('防撞組包含 Z 抬升與懸空降速；繞開已印牆面歸在表面品質', () => {
+  it('the anti-collision set includes Z hop and overhang slowdown; avoiding printed walls is filed under surface quality', () => {
     const keys = safe.moves.filter((move) => move.concern === 'collision').map((move) => move.key);
     expect(keys).toContain('filament_z_hop');
-    // 捲翹是碰撞的主要起因，所以懸空降速歸在防撞而不是品質。
+    // Curling is the main cause of collisions, so overhang slowdown belongs to collision, not quality.
     expect(keys).toContain('enable_overhang_speed');
-    // reduce_crossing_wall 的官方用途是避免表面料瘤；實測一個碗形件開啟後，
-    // 未抬升的跨外牆空跑反而從 0 次變 10 次，所以不能再當防撞建議。
+    // The documented purpose of reduce_crossing_wall is avoiding surface blobs; in a test on a bowl-shaped
+    // part, enabling it raised unlifted outer-wall crossings from 0 to 10, so it can no longer be an
+    // anti-collision recommendation.
     expect(keys).not.toContain('reduce_crossing_wall');
     const quality = safe.moves.filter((move) => move.concern === 'quality').map((move) => move.key);
     expect(quality).toContain('reduce_crossing_wall');
   });
 
-  it('列舉型建議值使用 BambuStudio 的實際字串', () => {
-    // 這些字串已對照原始碼 PrintConfig.cpp 與實際 preset 確認。
+  it('enum suggestions use the actual BambuStudio strings', () => {
+    // These strings were checked against the PrintConfig.cpp source and real presets.
     const suggested = Object.fromEntries(
       [...safe.moves, ...safe.conditional].map((move) => [move.key, move.suggested]),
     );
@@ -121,56 +123,56 @@ describe('safe 目標', () => {
     expect(suggested['initial_layer_infill_speed']).toBe('30 mm/s');
   });
 
-  it('外觀目標使用 Bambu Studio 的 Monotonic line 實際值', () => {
+  it('the surface goal uses the actual Bambu Studio value for Monotonic line', () => {
     const surface = getGoal('surface')!;
     expect(surface.moves.find((move) => move.key === 'top_surface_pattern')?.suggested).toBe(
       'monotonicline',
     );
   });
 
-  it('點出不是參數能解的部分', () => {
-    expect(safe.notAParameterProblem).toMatch(/清乾淨|方向/);
+  it('points out what parameters cannot fix', () => {
+    expect(safe.notAParameterProblem).toMatch(/clean the bed|orientation/);
   });
 
-  it('ABS 註記同時提醒降低冷卻會加重捲翹', () => {
-    // 這是 safe 目標內部真實存在的衝突：抗翹要關風扇，防撞要開風扇。
-    expect(safe.materialNotes?.['ABS']).toMatch(/捲翹|翹/);
+  it('the ABS note also warns that reducing cooling makes curling worse', () => {
+    // This is a real conflict inside the safe goal: fighting warping wants the fan off, avoiding collisions wants it on.
+    expect(safe.materialNotes?.['ABS']).toMatch(/curl|warp/);
   });
 });
 
 describe('applicableConditional', () => {
   const safe = getGoal('safe')!;
 
-  it('沒有對應發現時不追加任何調整', () => {
+  it('adds nothing when there are no matching findings', () => {
     expect(applicableConditional(safe, [])).toEqual([]);
   });
 
-  it('底面積過小時加寬 brim', () => {
+  it('widens the brim when the footprint is too small', () => {
     const moves = applicableConditional(safe, ['small-footprint']);
     expect(moves.map((move) => move.key)).toEqual(['brim_width']);
-    expect(moves[0]?.because).toMatch(/撞倒/);
+    expect(moves[0]?.because).toMatch(/knock over/);
   });
 
-  it('陡峭懸空時才建議開支撐', () => {
+  it('only suggests support for steep overhangs', () => {
     expect(applicableConditional(safe, ['steep-overhang']).map((m) => m.key)).toEqual([
       'enable_support',
     ]);
   });
 
-  it('多個發現時全部追加', () => {
+  it('adds all of them when there are several findings', () => {
     const codes: readonly PrintabilityCode[] = ['small-footprint', 'tall-and-narrow', 'large-flat-area'];
     expect(applicableConditional(safe, codes)).toHaveLength(3);
   });
 
-  it('不相干的發現不觸發', () => {
+  it('unrelated findings do not trigger anything', () => {
     expect(applicableConditional(safe, ['non-manifold', 'degenerate-geometry'])).toEqual([]);
   });
 });
 
-describe('目標與 catalog 的關係', () => {
-  it('catalog 收錄的參數涵蓋大部分目標調整', () => {
-    // 不要求百分之百 —— catalog 是精選，目標可以指向更廣的 key 空間。
-    // 但涵蓋率太低代表 catalog 該補了。
+describe('goals and the catalog', () => {
+  it('the catalog covers most goal adjustments', () => {
+    // 100% is not required — the catalog is curated, and goals can point into a wider key space.
+    // But low coverage means the catalog needs filling in.
     const known = new Set(knownParameterKeys());
     const moves = allMoves();
     const covered = moves.filter(({ move }) => known.has(move.key)).length;

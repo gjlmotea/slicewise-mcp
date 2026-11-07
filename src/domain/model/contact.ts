@@ -3,24 +3,29 @@ import type { Triangle } from './stl.js';
 import { boxDistance, distanceBetween, dot, subtract, TriangleSet } from './triangle-set.js';
 
 /**
- * 接觸判定：兩組三角形是不是同一顆實體的一部分。
+ * Contact test: are two triangle sets parts of the same solid?
  *
- * 這跟「最小距離」是不同的問題，而且便宜得多。
- * 最小距離要把精確值找出來，得掃過所有可能更近的地方；接觸判定只要回答是非題，
- * 一旦找到證據就結束，而且搜尋半徑固定是那個很小的容差，網格幾乎每次都只看一格。
+ * This is a different question from "minimum distance", and much cheaper. Minimum distance
+ * has to find the exact value, so it must sweep every place that could be closer; the contact
+ * test only answers yes/no, stops as soon as it finds evidence, and its search radius is fixed
+ * at that tiny tolerance, so the spatial query almost always looks at a single cell.
  *
- * 「同一顆實體」有兩種形態，兩種都要認：
+ * "Same solid" comes in two forms, and both must be recognised:
  *
- * 1. **貼合** —— 換色切面那種，兩個面完全重疊，距離 0。用距離查詢就抓得到。
- * 2. **穿透** —— 插銷插進孔裡、裝飾球嵌在環上。這種兩邊的頂點可能離對方表面好幾 mm，
- *    真正距離 0 的是兩個面「交叉」的那條線。距離查詢抓不到，要用相交測試。
+ * 1. **Coincident**: like a colour-change cut, two faces overlap exactly at distance 0. A
+ *    distance query catches this.
+ * 2. **Interpenetrating**: a pin pushed into a hole, a decorative ball embedded in a ring. Here
+ *    the vertices on both sides may be several mm from the other surface, and the place where
+ *    the distance is truly 0 is the line where the two faces *cross*. A distance query misses
+ *    it; an intersection test is needed.
  */
 
 /**
- * 線段與三角形相交（Möller–Trumbore）。
+ * Segment–triangle intersection (Möller–Trumbore).
  *
- * 回傳交點是否落在線段上（t ∈ [0, 1]）且在三角形內。
- * 平行於三角形平面的線段回傳 false —— 那種情況是共面，會由距離查詢那一路抓到。
+ * Returns whether the intersection point lies on the segment (t ∈ [0, 1]) and inside the
+ * triangle. A segment parallel to the triangle's plane returns false; that case is coplanar
+ * and is caught by the distance-query path instead.
  */
 function segmentHitsTriangle(p: Vec3, q: Vec3, t: Triangle): boolean {
   const direction = subtract(q, p);
@@ -53,10 +58,12 @@ function segmentHitsTriangle(p: Vec3, q: Vec3, t: Triangle): boolean {
 }
 
 /**
- * 兩個三角形是否相交。
+ * Whether two triangles intersect.
  *
- * 用「六條邊各自對另一個三角形做線段相交」判定。非共面的相交一定會讓至少一條邊穿過
- * 另一個三角形，所以這六次測試是完備的；共面的情況距離是 0，由呼叫端的距離查詢負責。
+ * Decided by testing each of the six edges as a segment against the other triangle. A
+ * non-coplanar intersection always makes at least one edge pass through the other triangle,
+ * so these six tests are complete; the coplanar case has distance 0 and is left to the
+ * caller's distance query.
  */
 function trianglesIntersect(a: Triangle, b: Triangle): boolean {
   return (
@@ -70,16 +77,18 @@ function trianglesIntersect(a: Triangle, b: Triangle): boolean {
 }
 
 /**
- * 兩組三角形是否在 `epsilon` 內接觸或互相穿透。
+ * Whether two triangle sets touch within `epsilon` or interpenetrate.
  *
- * 一找到證據就回 true。所有搜尋半徑都固定在 epsilon，所以網格剪枝非常有效 ——
- * 這是它比「算出精確最小距離再比較」快上兩個數量級的原因。
+ * Returns true as soon as evidence is found. Every search radius is fixed at epsilon, so
+ * spatial pruning is very effective; that is why this is two orders of magnitude faster than
+ * "compute the exact minimum distance and compare".
  */
 export function surfacesTouch(a: TriangleSet, b: TriangleSet, epsilon: number): boolean {
   if (a.triangles.length === 0 || b.triangles.length === 0) return false;
   if (boxDistance(a.box, b.box) > epsilon) return false;
 
-  // 讓三角形少的那一邊當來源、多的那一邊當查詢目標，掃描次數比較少。
+  // Use the side with fewer triangles as the source and the larger side as the query target,
+  // so fewer scans are needed.
   const [source, target] =
     a.triangles.length <= b.triangles.length ? ([a, b] as const) : ([b, a] as const);
 
@@ -91,7 +100,7 @@ export function surfacesTouch(a: TriangleSet, b: TriangleSet, epsilon: number): 
     const box = source.boundsOf(index);
     if (boxDistance(box, target.box) > epsilon) continue;
 
-    // 一、貼合：頂點落在對方表面上。
+    // 1. Coincident: a vertex lies on the other surface.
     for (const vertex of [triangle.a, triangle.b, triangle.c]) {
       const hit = target.nearestWithin(vertex, epsilon);
       if (hit !== undefined) {
@@ -101,7 +110,8 @@ export function surfacesTouch(a: TriangleSet, b: TriangleSet, epsilon: number): 
     }
     if (touching) break;
 
-    // 二、穿透：邊與對方的面交叉。只測 AABB 有交集的候選。
+    // 2. Interpenetrating: an edge crosses a face on the other side. Only candidates whose
+    //    AABBs overlap are tested.
     target.forEachNear(box, epsilon, (candidate) => {
       const other = target.triangles[candidate];
       if (other === undefined) return false;
@@ -117,11 +127,11 @@ export function surfacesTouch(a: TriangleSet, b: TriangleSet, epsilon: number): 
   return touching;
 }
 
-/** 給測試與診斷用：回報兩個三角形是否相交。 */
+/** For tests and diagnostics: reports whether two triangles intersect. */
 export const trianglesIntersectForTest = trianglesIntersect;
 
-/** 給測試用：線段與三角形相交。 */
+/** For tests: segment–triangle intersection. */
 export const segmentHitsTriangleForTest = segmentHitsTriangle;
 
-/** 幾何小工具再匯出，讓接觸判定的使用者不必再 import triangle-set。 */
+/** Re-export of a geometry helper so contact-test users need not import triangle-set as well. */
 export { distanceBetween };

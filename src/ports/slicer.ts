@@ -1,14 +1,14 @@
 import type { SliceRequest, SliceResult } from '../domain/contracts.js';
 
-/** 切片引擎：BambuStudio 的命令列模式。 */
+/** Slicing engine: BambuStudio's command-line mode. */
 export interface Slicer {
-  /** 執行檔路徑，用於狀態回報。 */
+  /** Executable path, used in status reports. */
   readonly executablePath: string;
 
-  /** 執行檔是否存在且可執行。 */
+  /** Whether the executable exists and can be run. */
   available(): boolean;
 
-  /** 讀取 CLI 自報的版本字串。 */
+  /** Reads the version string the CLI reports about itself. */
   version(): Promise<string | undefined>;
 
   slice(request: SliceRequest): Promise<SliceResult>;

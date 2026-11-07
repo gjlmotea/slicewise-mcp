@@ -17,7 +17,7 @@ function write(name: string, content: Buffer | string): string {
 }
 
 describe('readProjectFilamentColours', () => {
-  it('讀出 Bambu 專案 3MF 的各格耗材顏色', () => {
+  it('reads the per-slot filament colours of a Bambu project 3MF', () => {
     const path = write(
       'project.3mf',
       buildStoredZip([
@@ -31,14 +31,14 @@ describe('readProjectFilamentColours', () => {
     expect(readProjectFilamentColours(path)).toEqual(['#FFFFFF', '#E91D2D']);
   });
 
-  it('沒有專案設定的 3MF、STL 或讀不到的檔案回傳 undefined', () => {
+  it('returns undefined for a 3MF without project settings, an STL, or an unreadable file', () => {
     const bare = write('bare.3mf', buildStoredZip([{ name: '3D/3dmodel.model', content: '<model/>' }]));
     expect(readProjectFilamentColours(bare)).toBeUndefined();
     expect(readProjectFilamentColours(write('model.stl', 'solid cube\nendsolid cube\n'))).toBeUndefined();
     expect(readProjectFilamentColours(join(workDir, 'missing.3mf'))).toBeUndefined();
   });
 
-  it('顏色欄位形狀不對時不採信', () => {
+  it('does not trust a colour field with the wrong shape', () => {
     const path = write(
       'odd.3mf',
       buildStoredZip([

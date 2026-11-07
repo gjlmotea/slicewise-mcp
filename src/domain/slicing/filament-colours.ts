@@ -1,18 +1,23 @@
 import type { ParameterOverrides } from '../contracts.js';
 
 /**
- * 決定要不要把專案的耗材顏色交給 CLI。
+ * Decide whether to pass the project's filament colours to the CLI.
  *
- * BambuStudio CLI（02.07.01.62，`src/BambuStudio.cpp` 的 `disable_wipe_tower_after_mapping`）
- * 切 Bambu 專案 3MF 時，若 `--load-filaments` 載入的耗材設定**名稱全部相同**，會判定
- * 「所有耗材都對應到同一卷料」而強制關掉擦料塔 —— `enable_prime_tower` 覆寫也一起被吃掉。
- * 唯一會把它翻回來的條件，是命令列另外給了 `filament_colour` 且不只一種顏色。
+ * When BambuStudio CLI (02.07.01.62, `disable_wipe_tower_after_mapping` in
+ * `src/BambuStudio.cpp`) slices a Bambu project 3MF and the filament presets loaded via
+ * `--load-filaments` **all have the same name**, it concludes that "every filament maps to
+ * the same spool" and forces the prime tower off, swallowing any `enable_prime_tower`
+ * override too. The only condition that flips it back is a separate `filament_colour` on the
+ * command line with more than one colour.
  *
- * GUI 沒有這個問題，因為它知道專案每一格的顏色。最常見的情形是五格都選 Generic PLA、
- * 只是顏色不同：此時把專案自己的顏色原樣交給 CLI，切出來才會跟 GUI 一樣有擦料塔。
+ * The GUI does not have this problem because it knows each slot's colour. The most common case
+ * is five slots all set to Generic PLA, differing only in colour: passing the project's own
+ * colours to the CLI unchanged is what makes the slice get a prime tower, as in the GUI.
  *
- * 只在這個情形才傳。命令列一帶顏色，CLI 也會依顏色重算換色沖洗量；其他情形照舊交給
- * 專案自己的設定，不多做一件 GUI 不會做的事。使用者自己覆寫了 `filament_colour` 時不介入。
+ * Colours are passed only in that case. Once colours are on the command line, the CLI also
+ * recomputes colour-change flushing volumes from them; every other case is left to the
+ * project's own settings, doing nothing the GUI would not do. If the user has overridden
+ * `filament_colour` themselves, do not intervene.
  */
 export function filamentColourArgs(options: {
   readonly filamentPresets: readonly string[];

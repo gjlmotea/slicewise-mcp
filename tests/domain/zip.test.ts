@@ -9,7 +9,7 @@ const ARCHIVE = buildStoredZip([
 ]);
 
 describe('readZipDirectory', () => {
-  it('列出所有項目', () => {
+  it('lists all entries', () => {
     const entries = readZipDirectory(ARCHIVE);
     expect(entries.map((entry) => entry.name)).toEqual([
       'Metadata/project_settings.config',
@@ -17,22 +17,22 @@ describe('readZipDirectory', () => {
     ]);
   });
 
-  it('不是 ZIP 時明確報錯', () => {
+  it('throws an explicit error when the input is not a ZIP', () => {
     expect(() => readZipDirectory(Buffer.from('not a zip at all'))).toThrow(ZipFormatError);
   });
 
-  it('檔案太小時明確報錯', () => {
-    expect(() => readZipDirectory(Buffer.alloc(4))).toThrow(/太小/);
+  it('throws an explicit error when the file is too small', () => {
+    expect(() => readZipDirectory(Buffer.alloc(4))).toThrow(/too small/);
   });
 });
 
 describe('readZipEntry', () => {
-  it('取出未壓縮項目的內容', () => {
+  it('extracts the content of a stored (uncompressed) entry', () => {
     const content = readZipEntry(ARCHIVE, 'Metadata/project_settings.config');
     expect(content?.toString('utf8')).toBe('{"layer_height":"0.28"}');
   });
 
-  it('找不到項目時回 undefined 而不是拋錯', () => {
+  it('returns undefined rather than throwing when the entry is missing', () => {
     expect(readZipEntry(ARCHIVE, 'Metadata/missing.config')).toBeUndefined();
   });
 });

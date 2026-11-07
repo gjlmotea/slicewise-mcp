@@ -18,13 +18,13 @@ import {
 } from '../ports/preset-store.js';
 
 /**
- * 讀寫 BambuStudio 本機資料目錄。
+ * Reads and writes the local BambuStudio data directory.
  *
- * 目錄結構（macOS 為例）：
+ * Directory layout (macOS shown):
  * ```
  * ~/Library/Application Support/BambuStudio/
- *   BambuStudio.conf          目前選用的 machine／process／filament
- *   system/BBL.json           原廠 preset 索引（machine 148，其中 89 個是 G-code 模板；process 276、filament 1873）
+ *   BambuStudio.conf          currently selected machine / process / filament
+ *   system/BBL.json           factory preset index (machine 148, of which 89 are G-code templates; process 276, filament 1873)
  *   system/BBL/{machine,process,filament}/*.json
  *   user/<profileId>/{machine,process,filament}/*.json
  * ```
@@ -33,14 +33,15 @@ import {
 const VENDOR = 'BBL';
 
 /**
- * `<preset 名稱> template <key>`：BambuStudio 02.07 起從 preset 拆出去的機型 G-code。
- * 它們不是可選用的 preset，不進一般索引；展平時依繼承鏈逐層套用（見 resolver 的 TemplateReader）。
+ * `<preset name> template <key>`: machine G-code that BambuStudio 02.07+ split out of presets.
+ * They are not selectable presets and stay out of the normal index; when flattening they are
+ * applied level by level along the inheritance chain (see the resolver's TemplateReader).
  */
 const TEMPLATE_ENTRY = /^(.+) template ([a-z][a-z0-9_]*)$/;
 
 type TemplateEntry = {
   readonly name: string;
-  /** 模板名稱尾端指定的那一個設定 key。 */
+  /** The single setting key named at the end of the template name. */
   readonly key: string;
   readonly absolutePath: string;
 };
@@ -71,10 +72,10 @@ export class NodePresetStore implements PresetStore {
   readonly profileId: string | undefined;
   readonly vendorVersion: string | undefined;
 
-  /** key 為 `${kind}:${name}`。使用者 preset 覆蓋同名原廠 preset。 */
+  /** Keyed by `${kind}:${name}`. A user preset shadows the system preset of the same name. */
   readonly #index: Map<string, IndexedPreset>;
   readonly #cache = new Map<string, RawPreset>();
-  /** key 為 `${kind}:${owner}`，owner 是模板所屬的 preset 名稱。 */
+  /** Keyed by `${kind}:${owner}`, where owner is the name of the preset the template belongs to. */
   readonly #templates = new Map<string, TemplateEntry[]>();
   readonly #templateCache = new Map<string, readonly RawPreset[]>();
 
@@ -91,7 +92,7 @@ export class NodePresetStore implements PresetStore {
     this.#indexUser(dataDir);
   }
 
-  /** 原廠 preset 走 BBL.json 索引，避免掃描 2000 多個檔案。 */
+  /** System presets come from the BBL.json index, to avoid scanning 2000+ files. */
   #indexSystem(vendorIndex: Record<string, unknown> | undefined, dataDir: string): void {
     if (vendorIndex === undefined) return;
     const systemRoot = join(dataDir, 'system');
@@ -127,7 +128,7 @@ export class NodePresetStore implements PresetStore {
             kind,
             origin: 'system',
             relativePath: relative(dataDir, absolutePath),
-            // 先填保守值；真正的 instantiation 需要讀檔，延後到 list() 時解析。
+            // Start with a conservative value; the real instantiation needs a file read, deferred to list().
             instantiable: !name.startsWith('fdm_'),
           },
         });
@@ -135,7 +136,7 @@ export class NodePresetStore implements PresetStore {
     }
   }
 
-  /** 使用者 preset 沒有索引檔，直接掃目錄。 */
+  /** User presets have no index file, so scan the directory directly. */
   #indexUser(dataDir: string): void {
     if (this.profileId === undefined) return;
     const userRoot = join(dataDir, 'user', this.profileId);
@@ -173,7 +174,7 @@ export class NodePresetStore implements PresetStore {
       const raw = this.readRaw(indexed.entry.name, kind);
       const body = raw?.body ?? {};
       const inherits = typeof body['inherits'] === 'string' ? body['inherits'] : undefined;
-      // `instantiation` 明確寫 "false" 的是純繼承中間層，不能在 UI 選用。
+      // Presets with `instantiation` explicitly "false" are pure inheritance intermediates and cannot be selected in the UI.
       const instantiable = body['instantiation'] !== 'false';
 
       entries.push({
@@ -207,10 +208,11 @@ export class NodePresetStore implements PresetStore {
   }
 
   /**
-   * 以 owner 命名的 G-code 模板。
+   * G-code templates named after their owner.
    *
-   * body 只保留模板名稱指定的那一個 key：模板檔若夾帶其他欄位，或檔案缺了那個 key，
-   * 寧可不套也不要把非預期的值混進切片設定。
+   * The body keeps only the one key the template name specifies: if a template file carries
+   * other fields, or lacks that key, it is better not to apply it than to let unexpected
+   * values leak into the slicing settings.
    */
   readTemplates(owner: string, kind: PresetKind): readonly RawPreset[] {
     const bucket = `${kind}:${owner}`;
@@ -240,26 +242,26 @@ export class NodePresetStore implements PresetStore {
   writeUserPreset(request: WriteUserPresetRequest): WriteUserPresetResult {
     if (this.profileId === undefined) {
       throw new PresetStoreError(
-        `找不到 BambuStudio 使用者 profile 目錄（${join(this.dataDir, 'user')}）。` +
-          '請先在 Bambu Studio 登入或至少啟動過一次，讓它建立 profile 目錄。',
+        `BambuStudio user profile directory not found (${join(this.dataDir, 'user')}). ` +
+          'Sign in to Bambu Studio, or at least launch it once, so it creates the profile directory.',
       );
     }
 
     const safeName = request.name.trim();
     if (safeName === '' || /[\\/:*?"<>|]/.test(safeName)) {
-      throw new PresetStoreError(`preset 名稱不合法：${request.name}`);
+      throw new PresetStoreError(`Invalid preset name: ${request.name}`);
     }
 
     const parent = this.readRaw(request.inherits, request.kind);
     if (parent === undefined) {
       throw new PresetStoreError(
-        `要繼承的 ${request.kind} preset 不存在：${request.inherits}`,
+        `The ${request.kind} preset to inherit from does not exist: ${request.inherits}`,
       );
     }
     if (parent.origin !== 'system') {
       throw new PresetStoreError(
-        `只允許繼承原廠 preset，${request.inherits} 是使用者 preset；` +
-          '多層使用者繼承會讓 Bambu Studio 更新原廠 profile 時難以對帳。',
+        `Only system presets may be inherited from; ${request.inherits} is a user preset. ` +
+          'Multiple levels of user inheritance make it hard to reconcile when Bambu Studio updates its factory profiles.',
       );
     }
 
@@ -270,7 +272,7 @@ export class NodePresetStore implements PresetStore {
     const exists = existsSync(path);
     if (exists && request.overwrite !== true) {
       throw new PresetStoreError(
-        `${path} 已存在。要取代請明確帶 overwrite=true；不會靜默覆蓋既有 preset。`,
+        `${path} already exists. Pass overwrite=true explicitly to replace it; an existing preset is never silently overwritten.`,
       );
     }
 
@@ -288,7 +290,7 @@ export class NodePresetStore implements PresetStore {
 
     writeFileSync(path, `${JSON.stringify(body, null, 4)}\n`, 'utf8');
 
-    // 讓後續 resolve() 立刻看得到新寫入的 preset。
+    // Make the newly written preset visible to subsequent resolve() calls immediately.
     this.#cache.delete(`${request.kind}:${safeName}`);
     this.#index.set(`${request.kind}:${safeName}`, {
       absolutePath: path,
@@ -305,7 +307,7 @@ export class NodePresetStore implements PresetStore {
     return { path, created: !exists, overwritten: exists };
   }
 
-  /** 讀 BambuStudio.conf 目前選用的 preset，作為工具的預設值。 */
+  /** Read the presets currently selected in BambuStudio.conf, used as the tools' defaults. */
   currentSelection(): { machine?: string; process?: string; filaments?: readonly string[] } {
     const conf = readJson(join(this.dataDir, 'BambuStudio.conf'));
     const presets = conf?.['presets'];
@@ -327,10 +329,11 @@ export class NodePresetStore implements PresetStore {
 }
 
 /**
- * 找出使用者 profile 目錄名。
+ * Find the user profile directory name.
  *
- * BambuStudio.conf 的 `app.preset_folder` 是權威來源；讀不到時退回掃 user/ 下
- * 第一個非 default 的目錄。找不到就是 undefined，不亂猜一個名字去寫檔。
+ * `app.preset_folder` in BambuStudio.conf is authoritative; if it cannot be read, fall back
+ * to the first non-default directory under user/. If none is found the result is undefined,
+ * rather than guessing a name and writing files there.
  */
 function detectProfileId(dataDir: string): string | undefined {
   const conf = readJson(join(dataDir, 'BambuStudio.conf'));

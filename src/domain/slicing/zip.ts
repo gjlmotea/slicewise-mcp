@@ -1,20 +1,21 @@
 import { inflateRawSync } from 'node:zlib';
 
 /**
- * 最小 ZIP 讀取器。
+ * Minimal ZIP reader.
  *
- * 3MF 就是一個 ZIP 容器。我們只需要「按名稱取出單一項目」這一件事，
- * 不需要寫入、不需要串流、不需要加密支援，所以不引入第三方依賴。
+ * A 3MF is just a ZIP container. All we need is to extract a single entry by name: no
+ * writing, no streaming, no encryption support, so no third-party dependency is pulled in.
  *
- * 只支援 stored(0) 與 deflate(8) 兩種壓縮方式 —— BambuStudio 的輸出只用這兩種。
- * 遇到其他方式一律明確拋錯，不做靜默略過。
+ * Only the stored(0) and deflate(8) compression methods are supported, the only two
+ * BambuStudio's output uses. Any other method throws an explicit error rather than being
+ * silently skipped.
  */
 
 const EOCD_SIGNATURE = 0x06054b50;
 const CENTRAL_SIGNATURE = 0x02014b50;
 const LOCAL_SIGNATURE = 0x04034b50;
 const EOCD_MIN_SIZE = 22;
-/** EOCD 後面可以跟最多 65535 bytes 的註解。 */
+/** The EOCD may be followed by a comment of up to 65535 bytes. */
 const MAX_COMMENT = 0xffff;
 
 export type ZipEntry = {
@@ -32,7 +33,7 @@ export class ZipFormatError extends Error {
   }
 }
 
-/** 讀 central directory，回傳所有項目的索引。 */
+/** Read the central directory and return the index of all entries. */
 export function readZipDirectory(buffer: Buffer): readonly ZipEntry[] {
   const eocdOffset = findEndOfCentralDirectory(buffer);
   const entryCount = buffer.readUInt16LE(eocdOffset + 10);
@@ -41,10 +42,10 @@ export function readZipDirectory(buffer: Buffer): readonly ZipEntry[] {
   const entries: ZipEntry[] = [];
   for (let index = 0; index < entryCount; index += 1) {
     if (cursor + 46 > buffer.length) {
-      throw new ZipFormatError('central directory 被截斷');
+      throw new ZipFormatError('central directory is truncated');
     }
     if (buffer.readUInt32LE(cursor) !== CENTRAL_SIGNATURE) {
-      throw new ZipFormatError(`central directory 第 ${index} 項簽章不正確`);
+      throw new ZipFormatError(`central directory entry ${index} has an invalid signature`);
     }
 
     const compressionMethod = buffer.readUInt16LE(cursor + 10);
@@ -70,7 +71,7 @@ export function readZipDirectory(buffer: Buffer): readonly ZipEntry[] {
   return entries;
 }
 
-/** 取出單一項目的內容。找不到回傳 undefined，讓呼叫端決定是不是致命。 */
+/** Extract a single entry's content. Returns undefined if not found, letting the caller decide whether that is fatal. */
 export function readZipEntry(buffer: Buffer, entryName: string): Buffer | undefined {
   const entry = readZipDirectory(buffer).find((candidate) => candidate.name === entryName);
   if (entry === undefined) return undefined;
@@ -80,17 +81,17 @@ export function readZipEntry(buffer: Buffer, entryName: string): Buffer | undefi
 export function extractEntry(buffer: Buffer, entry: ZipEntry): Buffer {
   const offset = entry.localHeaderOffset;
   if (offset + 30 > buffer.length || buffer.readUInt32LE(offset) !== LOCAL_SIGNATURE) {
-    throw new ZipFormatError(`${entry.name} 的 local header 簽章不正確`);
+    throw new ZipFormatError(`${entry.name} has an invalid local header signature`);
   }
 
-  // local header 的 name／extra 長度可能與 central directory 不同，必須重讀。
+  // The local header's name / extra lengths may differ from the central directory's, so they must be re-read.
   const nameLength = buffer.readUInt16LE(offset + 26);
   const extraLength = buffer.readUInt16LE(offset + 28);
   const dataStart = offset + 30 + nameLength + extraLength;
   const dataEnd = dataStart + entry.compressedSize;
 
   if (dataEnd > buffer.length) {
-    throw new ZipFormatError(`${entry.name} 的資料超出檔案長度`);
+    throw new ZipFormatError(`${entry.name} data extends past the end of the file`);
   }
 
   const raw = buffer.subarray(dataStart, dataEnd);
@@ -102,14 +103,14 @@ export function extractEntry(buffer: Buffer, entry: ZipEntry): Buffer {
       return inflateRawSync(raw);
     default:
       throw new ZipFormatError(
-        `${entry.name} 使用不支援的壓縮方式 ${entry.compressionMethod}；只支援 stored 與 deflate`,
+        `${entry.name} uses unsupported compression method ${entry.compressionMethod}; only stored and deflate are supported`,
       );
   }
 }
 
 function findEndOfCentralDirectory(buffer: Buffer): number {
   if (buffer.length < EOCD_MIN_SIZE) {
-    throw new ZipFormatError('檔案太小，不是合法的 ZIP 容器');
+    throw new ZipFormatError('File is too small to be a valid ZIP container');
   }
 
   const earliest = Math.max(0, buffer.length - EOCD_MIN_SIZE - MAX_COMMENT);
@@ -118,5 +119,5 @@ function findEndOfCentralDirectory(buffer: Buffer): number {
       return offset;
     }
   }
-  throw new ZipFormatError('找不到 end of central directory；檔案不是 ZIP 或已損毀');
+  throw new ZipFormatError('End of central directory not found; the file is not a ZIP or is corrupted');
 }

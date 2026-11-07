@@ -5,13 +5,14 @@ import type {
 } from '../ports/model-catalog.js';
 
 /**
- * Thingiverse 官方 REST API。
+ * Thingiverse official REST API.
  *
- * 這是三大模型平台裡唯一有正式開發者介面與 App Token 流程的一家，
- * 所以只有它能標記為 `official-api`。
+ * Of the three major model platforms, this is the only one with a formal developer
+ * interface and App Token flow, so it is the only one that may be marked `official-api`.
  *
- * Token 從 https://www.thingiverse.com/developers 申請，
- * 以 `THINGIVERSE_TOKEN` 環境變數提供；不進版控、不寫進任何輸出。
+ * Apply for a token at https://www.thingiverse.com/developers and provide it through
+ * the `THINGIVERSE_TOKEN` environment variable; it is never committed to version
+ * control or written into any output.
  */
 
 const ENDPOINT = 'https://api.thingiverse.com';
@@ -38,9 +39,9 @@ export class ThingiverseCatalog implements ModelCatalog {
         hits: [],
         handoffUrl: `https://www.thingiverse.com/search?q=${encodeURIComponent(query)}&type=things`,
         notes: [
-          '未設定 THINGIVERSE_TOKEN，無法呼叫官方 API。',
-          'Token 申請：https://www.thingiverse.com/developers',
-          '在此之前只能提供查詢連結由人自行開啟。',
+          'THINGIVERSE_TOKEN is not set, so the official API cannot be called.',
+          'Apply for a token: https://www.thingiverse.com/developers',
+          'Until then, only a search link can be provided for a person to open.',
         ],
       };
     }
@@ -64,8 +65,8 @@ export class ThingiverseCatalog implements ModelCatalog {
           integration: this.integration,
           hits: [],
           notes: [
-            `Thingiverse API 回應 ${response.status}。` +
-              (response.status === 401 ? ' Token 無效或已撤銷。' : ''),
+            `Thingiverse API responded ${response.status}.` +
+              (response.status === 401 ? ' The token is invalid or has been revoked.' : ''),
           ],
         };
       }
@@ -83,7 +84,7 @@ export class ThingiverseCatalog implements ModelCatalog {
         integration: this.integration,
         hits: [],
         notes: [
-          `呼叫 Thingiverse API 失敗：${error instanceof Error ? error.message : String(error)}`,
+          `Thingiverse API call failed: ${error instanceof Error ? error.message : String(error)}`,
         ],
       };
     } finally {
@@ -93,7 +94,7 @@ export class ThingiverseCatalog implements ModelCatalog {
 }
 
 function parseHits(payload: unknown, limit: number): readonly ModelSearchHit[] {
-  // API 有時回傳陣列，有時回傳 { hits: [...] }。兩種都接。
+  // The API sometimes returns an array and sometimes { hits: [...] }. Accept both.
   const items = Array.isArray(payload)
     ? payload
     : typeof payload === 'object' && payload !== null && Array.isArray((payload as { hits?: unknown }).hits)

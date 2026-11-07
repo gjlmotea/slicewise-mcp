@@ -1,17 +1,18 @@
 import type { BoundingBox, ModelInspection, Vec3 } from '../contracts.js';
 
 /**
- * STL 解析與幾何量測。
+ * STL parsing and geometry measurement.
  *
- * 支援 binary 與 ASCII 兩種格式。STL 沒有單位資訊，一律以 mm 解讀 ——
- * 這是 3D 列印生態的實質約定，也是 BambuStudio 匯入時的假設。
+ * Supports both binary and ASCII formats. STL carries no unit information and is always read
+ * as mm — that is the de facto convention of the 3D printing ecosystem, and also what
+ * BambuStudio assumes on import.
  */
 
 export type Triangle = {
   readonly a: Vec3;
   readonly b: Vec3;
   readonly c: Vec3;
-  /** 檔案宣告的法向量；許多匯出器寫 0,0,0，所以計算一律用頂點自算。 */
+  /** The normal declared in the file; many exporters write 0,0,0, so calculations always derive it from the vertices. */
   readonly declaredNormal: Vec3;
 };
 
@@ -26,10 +27,11 @@ const BINARY_HEADER_BYTES = 84;
 const BINARY_TRIANGLE_BYTES = 50;
 
 /**
- * 判斷 binary 還是 ASCII。
+ * Decides between binary and ASCII.
  *
- * 不能只看開頭是不是 "solid" —— binary STL 的 80 bytes 標頭也可能剛好以 solid 開頭。
- * 唯一可靠的判準是：binary 的長度必定等於 84 + 50 × 三角形數。
+ * Checking whether it starts with "solid" is not enough — the 80-byte header of a binary STL
+ * may happen to start with "solid" too. The only reliable test: a binary file's length is
+ * always exactly 84 + 50 × triangle count.
  */
 export function isBinaryStl(buffer: Buffer): boolean {
   if (buffer.length < BINARY_HEADER_BYTES) return false;
@@ -89,7 +91,7 @@ function parseAsciiStl(text: string): readonly Triangle[] {
     if (line.startsWith('vertex')) {
       const parts = line.match(numbers)?.map(Number.parseFloat) ?? [];
       if (parts.length < 3) {
-        throw new StlParseError(`ASCII STL 的 vertex 行格式不正確：${line}`);
+        throw new StlParseError(`Malformed vertex line in ASCII STL: ${line}`);
       }
       vertices.push({ x: parts[0] ?? 0, y: parts[1] ?? 0, z: parts[2] ?? 0 });
       continue;
@@ -98,7 +100,7 @@ function parseAsciiStl(text: string): readonly Triangle[] {
     if (line.startsWith('endfacet')) {
       const [a, b, c] = vertices;
       if (a === undefined || b === undefined || c === undefined) {
-        throw new StlParseError('ASCII STL 有 facet 的頂點少於三個');
+        throw new StlParseError('ASCII STL has a facet with fewer than three vertices');
       }
       triangles.push({ a, b, c, declaredNormal });
       vertices = [];
@@ -106,13 +108,13 @@ function parseAsciiStl(text: string): readonly Triangle[] {
   }
 
   if (triangles.length === 0) {
-    throw new StlParseError('沒有解析到任何三角形；檔案可能不是 STL 或已損毀');
+    throw new StlParseError('No triangles were parsed; the file may not be an STL or may be corrupted');
   }
 
   return triangles;
 }
 
-// ── 幾何量測 ────────────────────────────────────────────────────────────
+// ── Geometry measurement ────────────────────────────────────────────────
 
 export function subtract(a: Vec3, b: Vec3): Vec3 {
   return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
@@ -134,7 +136,7 @@ export function length(v: Vec3): number {
   return Math.sqrt(dot(v, v));
 }
 
-/** 由頂點計算的單位法向量；退化三角形回傳 undefined。 */
+/** Unit normal computed from the vertices; undefined for a degenerate triangle. */
 export function faceNormal(triangle: Triangle): Vec3 | undefined {
   const normal = cross(subtract(triangle.b, triangle.a), subtract(triangle.c, triangle.a));
   const magnitude = length(normal);
@@ -173,9 +175,10 @@ export function boundingBox(triangles: readonly Triangle[]): BoundingBox {
 }
 
 /**
- * 以帶號四面體體積求和計算封閉體積。
+ * Computes the enclosed volume by summing signed tetrahedron volumes.
  *
- * 對非封閉網格這個值沒有物理意義，所以 `inspectModel` 只在 `closed` 為真時才對外宣稱是體積。
+ * For a mesh that is not closed this value has no physical meaning, so `inspectModel` only
+ * presents it as a volume when `closed` is true.
  */
 export function signedVolume(triangles: readonly Triangle[]): number {
   let total = 0;
@@ -186,10 +189,11 @@ export function signedVolume(triangles: readonly Triangle[]): number {
 }
 
 /**
- * 以邊配對判斷網格是否封閉。
+ * Decides whether a mesh is closed by pairing up edges.
  *
- * 頂點座標用浮點值做 key 會因為匯出精度而配不起來，所以先量化到 1e-5 mm。
- * 這個容差遠小於任何列印特徵，不會把真正的破洞黏起來。
+ * Using raw float coordinates as keys fails to pair because of export precision, so they are
+ * quantised to 1e-5 mm first. That tolerance is far smaller than any printable feature, so it
+ * will not glue a real hole shut.
  */
 const QUANTUM = 1e5;
 
@@ -205,7 +209,7 @@ export function countOpenEdges(triangles: readonly Triangle[]): number {
     for (let index = 0; index < 3; index += 1) {
       const from = keys[index] ?? '';
       const to = keys[(index + 1) % 3] ?? '';
-      // 無向邊：小的在前，這樣正反向會落在同一個 key。
+      // Undirected edge: smaller key first, so both directions land on the same key.
       const key = from < to ? `${from}|${to}` : `${to}|${from}`;
       edges.set(key, (edges.get(key) ?? 0) + 1);
     }

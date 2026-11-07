@@ -14,8 +14,8 @@ import {
 } from '../../src/domain/presets/resolver.js';
 
 /**
- * 這組 fixture 刻意複製 BambuStudio 原廠 preset 的真實形狀：
- * 葉節點只宣告少數 key，大部分設定藏在三層之上的 common 檔。
+ * These fixtures deliberately copy the real shape of BambuStudio system presets:
+ * the leaf preset declares only a few keys, and most settings live in a common file three layers up.
  */
 const FIXTURES: Record<string, Record<string, unknown>> = {
   fdm_process_common: {
@@ -49,7 +49,7 @@ const FIXTURES: Record<string, Record<string, unknown>> = {
     inherits: 'fdm_process_single_0.20',
     instantiation: 'true',
     setting_id: 'GP004',
-    description: '不應該進入展平結果',
+    description: 'must not end up in the flattened result',
     outer_wall_speed: ['200', '350'],
   },
 };
@@ -62,23 +62,23 @@ function reader(name: string, _kind: PresetKind): RawPreset | undefined {
 }
 
 describe('resolvePreset', () => {
-  it('沿繼承鏈由根往葉覆蓋', () => {
+  it('overrides along the inheritance chain from root to leaf', () => {
     const resolved = resolvePreset('0.20mm Standard @BBL X1C', 'process', reader);
 
-    // 葉節點自己只宣告 outer_wall_speed，其餘全部來自上層。
+    // The leaf preset only declares outer_wall_speed itself; everything else comes from the layers above.
     expect(resolved.settings['sparse_infill_density']).toBe('15%');
     expect(resolved.settings['brim_width']).toBe('5');
     expect(resolved.settings['elefant_foot_compensation']).toBe('0.15');
     expect(resolved.settings['outer_wall_speed']).toEqual(['200', '350']);
   });
 
-  it('近的一層覆蓋遠的一層', () => {
+  it('a nearer layer overrides a farther one', () => {
     const resolved = resolvePreset('0.20mm Standard @BBL X1C', 'process', reader);
-    // common 給 2，single_common 給 3；較近的 single_common 應該贏。
+    // common gives 2, single_common gives 3; the nearer single_common should win.
     expect(resolved.settings['wall_loops']).toBe('3');
   });
 
-  it('回報繼承鏈由葉到根', () => {
+  it('reports the inheritance chain from leaf to root', () => {
     const resolved = resolvePreset('0.20mm Standard @BBL X1C', 'process', reader);
     expect(resolved.inheritanceChain).toEqual([
       '0.20mm Standard @BBL X1C',
@@ -88,14 +88,14 @@ describe('resolvePreset', () => {
     ]);
   });
 
-  it('記錄每個值實際來自哪一層', () => {
+  it('records which layer each value actually came from', () => {
     const resolved = resolvePreset('0.20mm Standard @BBL X1C', 'process', reader);
     expect(resolved.provenance['sparse_infill_density']).toBe('fdm_process_common');
     expect(resolved.provenance['wall_loops']).toBe('fdm_process_single_common');
     expect(resolved.provenance['outer_wall_speed']).toBe('0.20mm Standard @BBL X1C');
   });
 
-  it('排除 metadata 欄位，不讓它們污染切片設定', () => {
+  it('excludes metadata fields so they do not pollute slicing settings', () => {
     const resolved = resolvePreset('0.20mm Standard @BBL X1C', 'process', reader);
     expect(resolved.settings['description']).toBeUndefined();
     expect(resolved.settings['setting_id']).toBeUndefined();
@@ -103,31 +103,31 @@ describe('resolvePreset', () => {
     expect(resolved.settings['name']).toBeUndefined();
   });
 
-  it('找不到 preset 時明確報錯', () => {
-    expect(() => resolvePreset('不存在', 'process', reader)).toThrow(PresetResolutionError);
+  it('throws a clear error when the preset is not found', () => {
+    expect(() => resolvePreset('does-not-exist', 'process', reader)).toThrow(PresetResolutionError);
   });
 
-  it('父層不存在時指出是誰繼承了它', () => {
+  it('names the inheriting preset when a parent does not exist', () => {
     const broken = (name: string): RawPreset | undefined =>
       name === 'leaf'
         ? { name, kind: 'process', origin: 'system', body: { inherits: 'missing-parent' } }
         : undefined;
-    expect(() => resolvePreset('leaf', 'process', broken)).toThrow(/繼承了不存在/);
+    expect(() => resolvePreset('leaf', 'process', broken)).toThrow(/leaf inherits a process preset that does not exist: missing-parent/);
   });
 
-  it('偵測循環繼承而不是無限遞迴', () => {
+  it('detects inheritance cycles instead of recursing forever', () => {
     const cyclic = (name: string): RawPreset => ({
       name,
       kind: 'process',
       origin: 'system',
       body: { inherits: name === 'a' ? 'b' : 'a' },
     });
-    expect(() => resolvePreset('a', 'process', cyclic)).toThrow(/循環/);
+    expect(() => resolvePreset('a', 'process', cyclic)).toThrow(/inheritance cycle/);
   });
 });
 
 describe('toFlattenedPresetFile', () => {
-  it('移除 inherits，保留 CLI 判別用的 type', () => {
+  it('removes inherits and keeps the type the CLI uses to tell files apart', () => {
     const resolved = resolvePreset('0.20mm Standard @BBL X1C', 'process', reader);
     const file = toFlattenedPresetFile(resolved);
     expect(file['inherits']).toBeUndefined();
@@ -135,24 +135,24 @@ describe('toFlattenedPresetFile', () => {
     expect(file['name']).toBe('0.20mm Standard @BBL X1C');
   });
 
-  it('覆寫值蓋過展平結果', () => {
+  it('overrides take precedence over the flattened result', () => {
     const resolved = resolvePreset('0.20mm Standard @BBL X1C', 'process', reader);
     const file = toFlattenedPresetFile(resolved, { layer_height: '0.28' });
     expect(file['layer_height']).toBe('0.28');
-    // 沒被覆寫的仍保留展平值。
+    // Keys that were not overridden keep their flattened values.
     expect(file['sparse_infill_density']).toBe('15%');
   });
 });
 
 describe('normaliseValue', () => {
-  it('把數字與布林轉成 BambuStudio 的字串表示', () => {
+  it('converts numbers and booleans to BambuStudio string form', () => {
     expect(normaliseValue(0.28)).toBe('0.28');
     expect(normaliseValue(true)).toBe('1');
     expect(normaliseValue(false)).toBe('0');
     expect(normaliseValue(['200', 350])).toEqual(['200', '350']);
   });
 
-  it('拒絕無法安全轉換的值，而不是硬塞', () => {
+  it('rejects values that cannot be converted safely instead of forcing them', () => {
     expect(normaliseValue({ nested: true })).toBeUndefined();
     expect(normaliseValue(null)).toBeUndefined();
     expect(normaliseValue(Number.NaN)).toBeUndefined();
@@ -160,19 +160,19 @@ describe('normaliseValue', () => {
 });
 
 describe('valuesEqual', () => {
-  it('單值與單元素陣列視為相等', () => {
+  it('treats a single value and a one-element array as equal', () => {
     expect(valuesEqual('200', ['200'])).toBe(true);
     expect(valuesEqual(['200'], '200')).toBe(true);
   });
 
-  it('長度或內容不同就是不等', () => {
+  it('different lengths or contents are not equal', () => {
     expect(valuesEqual(['200', '350'], ['200'])).toBe(false);
     expect(valuesEqual('200', '350')).toBe(false);
   });
 });
 
 describe('diffPresets', () => {
-  it('列出兩邊不同與單邊缺少的 key', () => {
+  it('lists keys that differ and keys missing on one side', () => {
     const differences = diffPresets(
       { layer_height: '0.2', wall_loops: '2' },
       { layer_height: '0.28', brim_width: '5' },
@@ -186,18 +186,18 @@ describe('diffPresets', () => {
 });
 
 describe('isMetadataKey', () => {
-  it('把 preset 自身描述欄位歸為 metadata', () => {
+  it('classifies fields describing the preset itself as metadata', () => {
     expect(isMetadataKey('setting_id')).toBe(true);
     expect(isMetadataKey('inherits')).toBe(true);
     expect(isMetadataKey('layer_height')).toBe(false);
   });
 });
 
-describe('G-code 模板', () => {
+describe('G-code templates', () => {
   /**
-   * 照 BambuStudio 02.07 的真實形狀：機型 G-code 不在葉節點本體，而是另外登記的
-   * `<preset> template <key>` 條目；P2S 0.6 沒有自己的模板、繼承 P2S 0.4，
-   * X1C 0.6 則有自己的模板、同時繼承 X1C 0.4。
+   * Follows the real shape of BambuStudio 02.07: machine G-code is not in the leaf preset body but in
+   * separately registered `<preset> template <key>` entries; P2S 0.6 has no templates of its own and
+   * inherits P2S 0.4, while X1C 0.6 has its own templates and also inherits X1C 0.4.
    */
   const MACHINES: Record<string, { origin?: 'user'; body: Record<string, unknown> }> = {
     fdm_machine_common: {
@@ -234,36 +234,36 @@ describe('G-code 模板', () => {
       body: { [key]: value },
     }));
 
-  it('葉節點沒宣告的機型 G-code 取自它的模板，而不是退回 fdm_machine_common', () => {
+  it('machine G-code the leaf does not declare comes from its template, not fdm_machine_common', () => {
     const resolved = resolvePreset('P2S 0.4', 'machine', readMachine, readTemplates);
     expect(resolved.settings['machine_start_gcode']).toBe('P2S start');
     expect(resolved.provenance['machine_start_gcode']).toBe('P2S 0.4 template machine_start_gcode');
-    // 模板蓋過上層 common 宣告的同一個 key。
+    // The template overrides the same key declared by the common layer above.
     expect(resolved.settings['layer_change_gcode']).toBe('P2S layer change');
-    // 沒有模板的 key 照常沿用繼承鏈。
+    // Keys without a template follow the inheritance chain as usual.
     expect(resolved.settings['change_filament_gcode']).toBe('generic change');
     expect(resolved.provenance['change_filament_gcode']).toBe('fdm_machine_common');
   });
 
-  it('沒有自己模板的子層沿用父層的模板', () => {
+  it('a child layer without its own templates keeps its parent\'s templates', () => {
     const resolved = resolvePreset('P2S 0.6', 'machine', readMachine, readTemplates);
     expect(resolved.settings['machine_start_gcode']).toBe('P2S start');
     expect(resolved.settings['nozzle_diameter']).toEqual(['0.6']);
   });
 
-  it('子層自己的模板蓋過父層的模板', () => {
+  it('a child layer\'s own templates override its parent\'s', () => {
     const resolved = resolvePreset('X1C 0.6', 'machine', readMachine, readTemplates);
     expect(resolved.settings['machine_start_gcode']).toBe('X1C 0.6 start');
     expect(resolved.provenance['machine_start_gcode']).toBe('X1C 0.6 template machine_start_gcode');
   });
 
-  it('使用者 preset 自訂的 G-code 蓋過它繼承的原廠模板', () => {
+  it('custom G-code in a user preset overrides the system template it inherits', () => {
     const resolved = resolvePreset('My P2S', 'machine', readMachine, readTemplates);
     expect(resolved.settings['machine_start_gcode']).toBe('user start');
     expect(resolved.provenance['machine_start_gcode']).toBe('My P2S');
   });
 
-  it('原廠模板不套在使用者層上，即使名稱相同', () => {
+  it('system templates are not applied to a user layer, even with the same name', () => {
     const readUserNamedLikeSystem = (name: string): RawPreset | undefined =>
       name === 'P2S 0.4'
         ? { name, kind: 'machine', origin: 'user', body: { machine_start_gcode: 'user start' } }
@@ -272,7 +272,7 @@ describe('G-code 模板', () => {
     expect(resolved.settings['machine_start_gcode']).toBe('user start');
   });
 
-  it('沒給模板讀取器時維持只走繼承鏈', () => {
+  it('without a template reader, only the inheritance chain is used', () => {
     const resolved = resolvePreset('P2S 0.4', 'machine', readMachine);
     expect(resolved.settings['machine_start_gcode']).toBe('G28 ; generic');
   });

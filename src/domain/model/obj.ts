@@ -3,16 +3,19 @@ import type { Triangle } from './stl.js';
 import type { MeshPart } from './threemf-reader.js';
 
 /**
- * Wavefront OBJ 解析。
+ * Wavefront OBJ parsing.
  *
- * 為什麼要吃 OBJ：Tinkercad 匯出「帶顏色」的模型只有 OBJ（配 .mtl），而 Bambu Studio
- * 匯入 OBJ 時會跳出顏色對應視窗、把每個材質分配到一個耗材槽。使用者實際丟進 Studio 的
- * 往往就是這個檔，不先轉成 STL 就該能檢查。
+ * Why accept OBJ: Tinkercad exports a model "with colours" only as OBJ (plus .mtl), and when
+ * Bambu Studio imports an OBJ it pops up a colour-mapping dialog that assigns each material to a
+ * filament slot. That is often the very file users drop into Studio, so it should be checkable
+ * without converting it to STL first.
  *
- * 零件邊界：OBJ 用 `o`（物件）與 `g`（群組）分段。Tinkercad 每個基本形狀各自一個 `o`，
- * 裡面再包一個 `g` 與 `usemtl`。以 `o` 為主、沒有 `o` 才退回 `g`，兩者都沒有就整檔一個零件。
+ * Part boundaries: OBJ splits into sections with `o` (object) and `g` (group). Tinkercad gives
+ * each primitive its own `o`, wrapping a `g` and a `usemtl` inside. `o` takes priority, `g` is
+ * the fallback when there is no `o`, and with neither the whole file is one part.
  *
- * 單位：OBJ 跟 STL 一樣沒有單位資訊，一律以 mm 解讀（Bambu Studio 匯入時也是這樣假設）。
+ * Units: like STL, OBJ carries no unit information and is always read as mm (Bambu Studio
+ * assumes the same on import).
  */
 
 export class ObjParseError extends Error {
@@ -23,10 +26,11 @@ export class ObjParseError extends Error {
 }
 
 /**
- * 判斷內容是不是 OBJ。
+ * Decides whether the content is OBJ.
  *
- * 看前 64 KB 有沒有 `v x y z` 頂點行與 `f` 面行。ASCII STL 的頂點行是 `vertex`，
- * 這個 pattern 要求 `v` 後面直接接空白，所以不會誤認。
+ * Looks for `v x y z` vertex lines and `f` face lines in the first 64 KB. ASCII STL vertex
+ * lines read `vertex`, and this pattern requires whitespace right after the `v`, so it cannot
+ * mistake one for the other.
  */
 export function looksLikeObj(buffer: Buffer): boolean {
   const head = buffer.subarray(0, 65536).toString('utf8');
@@ -34,7 +38,7 @@ export function looksLikeObj(buffer: Buffer): boolean {
   return /^v[ \t]+[-+.\d]/m.test(head) && /^f[ \t]+-?\d/m.test(head);
 }
 
-/** OBJ 的面索引從 1 開始；負數代表從目前已讀到的頂點往回數。 */
+/** OBJ face indices start at 1; a negative index counts back from the vertices read so far. */
 function resolveIndex(token: string, vertexCount: number): number | undefined {
   const raw = Number.parseInt(token.split('/')[0] ?? '', 10);
   if (!Number.isFinite(raw) || raw === 0) return undefined;
@@ -63,7 +67,7 @@ export function parseObj(text: string, displayName = 'model'): readonly MeshPart
       case 'v': {
         const [x, y, z] = rest.slice(0, 3).map(Number.parseFloat);
         if (x === undefined || y === undefined || z === undefined || [x, y, z].some(Number.isNaN)) {
-          throw new ObjParseError(`OBJ 的頂點行格式不正確：${line}`);
+          throw new ObjParseError(`Malformed vertex line in OBJ: ${line}`);
         }
         vertices.push({ x, y, z });
         break;
@@ -85,7 +89,7 @@ export function parseObj(text: string, displayName = 'model'): readonly MeshPart
           badFaces += 1;
           break;
         }
-        // 有 `o` 的檔案以物件為零件；只有 `g` 的檔案（Blender 舊版匯出常見）才以群組為零件。
+        // Files with `o` use objects as parts; only files with just `g` (common in older Blender exports) use groups as parts.
         const key = (usesObjects ? objectName : groupName) ?? objectName ?? displayName;
         let bucket = buckets.get(key);
         if (bucket === undefined) {
@@ -93,7 +97,7 @@ export function parseObj(text: string, displayName = 'model'): readonly MeshPart
           buckets.set(key, bucket);
           order.push(key);
         }
-        // 多邊形面以扇形三角化。OBJ 規格要求面是凸的，扇形對凸多邊形是正確的。
+        // Polygon faces are fan-triangulated. The OBJ spec requires convex faces, and a fan is correct for convex polygons.
         const resolved = indices as number[];
         const first = vertices[resolved[0] ?? 0];
         for (let k = 1; k + 1 < resolved.length; k += 1) {
@@ -105,7 +109,7 @@ export function parseObj(text: string, displayName = 'model'): readonly MeshPart
         break;
       }
       default:
-        // vt、vn、mtllib、s、l 等與幾何封閉體無關，略過。
+        // vt, vn, mtllib, s, l and the like have nothing to do with the closed solid geometry; skip them.
         break;
     }
   }
@@ -127,8 +131,8 @@ export function parseObj(text: string, displayName = 'model'): readonly MeshPart
   if (parts.length === 0) {
     throw new ObjParseError(
       badFaces > 0
-        ? `OBJ 有 ${badFaces} 個面的頂點索引無效，沒有解析到任何三角形；檔案可能已損毀`
-        : '沒有解析到任何三角形；檔案可能不是 OBJ 或只有點雲',
+        ? `OBJ has ${badFaces} face(s) with invalid vertex indices and no triangles were parsed; the file may be corrupted`
+        : 'No triangles were parsed; the file may not be an OBJ or may contain only a point cloud',
     );
   }
 

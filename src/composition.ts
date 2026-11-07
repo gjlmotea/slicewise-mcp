@@ -32,7 +32,7 @@ export function createBambuService(version: string, options: CompositionOptions 
     new HandoffCatalog(PRINTABLES),
   ];
 
-  // 輸出目錄本身也允許讀取：切完的 3MF 可以直接再拿去檢查。
+  // The output directory itself is also readable, so a freshly sliced 3MF can be inspected right away.
   const modelRoots = [
     ...(options.modelRoots ?? []),
     ...(options.outputDir === undefined ? [] : [options.outputDir]),
@@ -49,9 +49,9 @@ export function createBambuService(version: string, options: CompositionOptions 
       ? {}
       : {
           writeOutputFile: (fileName: string, data: Buffer): string => {
-            // 檔名不接受路徑分隔符：輸出一律留在設定的目錄內，不讓呼叫端穿越出去。
+            // File names must not contain path separators: output always stays inside the configured directory, so callers cannot traverse out of it.
             if (/[\\/]/.test(fileName)) {
-              throw new Error(`輸出檔名不得包含路徑分隔符：${fileName}`);
+              throw new Error(`Output file name must not contain path separators: ${fileName}`);
             }
             mkdirSync(outputDir, { recursive: true });
             const target = join(outputDir, fileName);

@@ -1,12 +1,13 @@
 import type { FilamentUsage, SliceStats } from '../contracts.js';
 
 /**
- * 從 BambuStudio 產出的 G-code 標頭解析客觀統計。
+ * Parse objective stats from the G-code header BambuStudio produces.
  *
- * 這些數字是切片器自己算的，不是我們估的。任何回報給使用者的「這樣改省了多少時間」
- * 都必須來自這裡，不能用參數推估 —— 推估會系統性偏離真實結果。
+ * These numbers are computed by the slicer itself, not estimated by us. Any "this change
+ * saved this much time" reported to the user must come from here, never be estimated from
+ * parameters: estimates drift systematically away from the real result.
  *
- * 欄位名稱以本機 BambuStudio 02.07.01.62 的實際輸出為準：
+ * Field names follow the actual output of a local BambuStudio 02.07.01.62:
  *
  * ```
  * ; model printing time: 8m 45s; total estimated time: 9m 5s
@@ -17,7 +18,8 @@ import type { FilamentUsage, SliceStats } from '../contracts.js';
  * ; layer_height = 0.2
  * ```
  *
- * 多色列印時用量欄位是「每一色一個值」，順序對應 `; filament:` 列出的耗材槽：
+ * For multi-colour prints the usage fields hold one value per colour, in the order of the
+ * filament slots listed by `; filament:`:
  *
  * ```
  * ; total filament length [mm] : 1563.48,1350.27,1834.46,9897.65
@@ -25,11 +27,12 @@ import type { FilamentUsage, SliceStats } from '../contracts.js';
  * ; filament: 2,3,4,5
  * ```
  *
- * 每一色的值已含換色沖洗與擦料塔用量（與 GUI「切片結果」表的 Total 欄相同），
- * 所以合計就是整盤用量。只取第一個值會把四色盤的 43.68 g 報成 4.66 g。
+ * Each colour's value already includes colour-change flushing and prime tower usage (same as
+ * the Total column of the GUI's slicing result table), so the sum is the whole plate's usage.
+ * Taking only the first value would report a four-colour plate's 43.68 g as 4.66 g.
  */
 
-/** 解析 `1h 2m 3s` 這類時間片段。 */
+/** Parse a duration fragment such as `1h 2m 3s`. */
 export function parseDurationSeconds(text: string): number | undefined {
   const pattern = /(\d+(?:\.\d+)?)\s*([hms])\b/g;
   let total = 0;
@@ -55,7 +58,7 @@ function firstNumber(text: string): number | undefined {
   return Number.isFinite(value) ? value : undefined;
 }
 
-/** 解析 `4.66,4.03,5.47` 這種逗號分隔的數列；任何一項不是數字就整個不採信。 */
+/** Parse a comma-separated number list such as `4.66,4.03,5.47`; if any item is not a number, reject the whole list. */
 function numberList(text: string): readonly number[] | undefined {
   const items = text.split(',').map((item) => item.trim());
   if (items.length === 0 || items.some((item) => !/^-?\d+(?:\.\d+)?$/.test(item))) return undefined;
@@ -73,10 +76,10 @@ function sum(values: readonly number[]): number {
 type HeaderField = { readonly key: string; readonly value: string };
 
 /**
- * 逐行拆出 `; key = value` 或 `; key : value`。
+ * Split each line into `; key = value` or `; key : value`.
  *
- * 注意欄位名稱本身含有 `[mm]`、`[cm^3]` 這類方括號，所以不能用「切第一個非文字字元」，
- * 必須明確找 `=` 或 `:`。
+ * Note that field names themselves contain brackets such as `[mm]` and `[cm^3]`, so splitting
+ * at the first non-word character does not work; look explicitly for `=` or `:`.
  */
 function parseHeaderLine(line: string): HeaderField | undefined {
   if (!line.startsWith(';')) return undefined;
@@ -90,7 +93,7 @@ function parseHeaderLine(line: string): HeaderField | undefined {
 }
 
 export function parseGcodeStats(gcode: string): SliceStats | undefined {
-  // 統計欄位集中在檔頭與檔尾；只取兩端，避免掃描數十 MB 的路徑本體。
+  // Stats fields sit in the file's head and tail; read only those ends to avoid scanning tens of MB of toolpath body.
   const head = gcode.slice(0, 64 * 1024);
   const tail = gcode.length > 128 * 1024 ? gcode.slice(gcode.length - 64 * 1024) : '';
   const lines = [...head.split('\n'), ...tail.split('\n')];
@@ -126,7 +129,7 @@ export function parseGcodeStats(gcode: string): SliceStats | undefined {
         filamentLengths ??= numberList(value);
         break;
       case 'filament': {
-        // 只收正整數清單：這是耗材槽編號，不是設定值。
+        // Accept only a list of positive integers: these are filament slot numbers, not setting values.
         const slots = numberList(value);
         if (slots !== undefined && slots.every((slot) => Number.isInteger(slot) && slot > 0)) {
           filamentSlots ??= slots;
@@ -134,9 +137,9 @@ export function parseGcodeStats(gcode: string): SliceStats | undefined {
         break;
       }
       case 'model printing time': {
-        // 這一行同時塞了兩個時間：
+        // This line packs two durations together:
         //   `8m 45s; total estimated time: 9m 5s`
-        // 必須先以分號切開，否則兩段時間會被加在一起。
+        // Split on the semicolon first, otherwise the two durations get added together.
         const [printing, ...rest] = value.split(';');
         modelPrintTimeSeconds ??= parseDurationSeconds(printing ?? '');
         const trailing = rest.join(';');
@@ -173,8 +176,9 @@ export function parseGcodeStats(gcode: string): SliceStats | undefined {
 }
 
 /**
- * 多色時逐色列出用量。單色不回傳 —— 那只是把合計再講一次。
- * 槽位編號只在與用量欄位數量一致時才採用，對不上就不硬配。
+ * For multi-colour prints, list usage per colour. Not returned for a single colour, since it
+ * would only repeat the total. Slot numbers are used only when their count matches the usage
+ * fields; if they do not line up, they are not forced to fit.
  */
 function breakdown(
   weights: readonly number[] | undefined,
@@ -197,7 +201,7 @@ function breakdown(
   });
 }
 
-/** 把秒數轉成人類可讀字串，用於工具回覆的摘要句。 */
+/** Turn seconds into a human-readable string, used in the summary sentence of tool replies. */
 export function formatDuration(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);

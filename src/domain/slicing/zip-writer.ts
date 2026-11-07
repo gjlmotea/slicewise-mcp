@@ -1,13 +1,15 @@
 import { crc32, deflateRawSync } from 'node:zlib';
 
 /**
- * 最小 ZIP 寫入器。
+ * Minimal ZIP writer.
  *
- * 3MF 是 ZIP 容器，所以要產生 3MF 就得能寫 ZIP。與 `zip.ts` 的讀取器一樣不引入
- * 第三方依賴：只需要「把幾個小的文字檔打包起來」這一件事。
+ * A 3MF is a ZIP container, so producing a 3MF means being able to write a ZIP. Like the
+ * reader in `zip.ts`, no third-party dependency is pulled in: all that is needed is packing
+ * a few small text files.
  *
- * 每個項目個別決定要不要壓縮 —— 壓完反而變大時就用 stored。小的 XML 通常壓得很好，
- * 但已經壓過的內容（例如嵌入的 PNG）壓了只會變大。
+ * Each entry decides on its own whether to compress: if deflating makes it larger, it is
+ * stored instead. Small XML usually compresses well, but already-compressed content (such as
+ * an embedded PNG) only grows when deflated.
  */
 
 export type ZipInputEntry = {
@@ -41,7 +43,7 @@ export function buildZip(entries: readonly ZipInputEntry[]): Buffer {
     local.writeUInt16LE(VERSION, 4);
     local.writeUInt16LE(0, 6); // flags
     local.writeUInt16LE(method, 8);
-    local.writeUInt16LE(0, 10); // mod time — 固定值讓輸出可重現
+    local.writeUInt16LE(0, 10); // mod time: a fixed value keeps the output reproducible
     local.writeUInt16LE(0, 12); // mod date
     local.writeUInt32LE(checksum, 14);
     local.writeUInt32LE(payload.length, 18);

@@ -4,43 +4,44 @@ import { meshBounds, type IndexedMesh } from './primitives.js';
 import type { Triangle } from './stl.js';
 
 /**
- * Bambu 專案 3MF 的組裝。
+ * Assembles a Bambu project 3MF.
  *
- * 這條路的價值在於：Bambu Studio 的非破壞性編輯（挖除體、局部參數區、支撐強制／阻擋）
- * **不是把原始網格改掉**，而是存成「多一個零件 + 一個 subtype 標籤」。
- * 也就是說產生這些編輯完全不需要幾何運算引擎，也不需要驅動 GUI。
+ * The value of this path: Bambu Studio's non-destructive edits (negative volumes, modifier
+ * regions with local settings, support enforcers/blockers) **do not modify the original mesh**.
+ * They are stored as "one more part + a subtype tag". So generating these edits needs neither a
+ * geometry kernel nor driving the GUI.
  *
- * 檔案結構取自 BambuStudio 02.07.01.62 自己的輸出：
+ * The file layout is taken from what BambuStudio 02.07.01.62 itself writes:
  *
  * ```
  * [Content_Types].xml
- * _rels/.rels                      → 指向 /3D/3dmodel.model
- * 3D/3dmodel.model                 → <object> 內含每個零件一個 <component>
- * 3D/_rels/3dmodel.model.rels      → 指向 /3D/Objects/object_1.model
- * 3D/Objects/object_1.model        → 每個零件一個 <object>，內含實際網格
- * Metadata/model_settings.config   → <part id="N" subtype="..."> 對應 component 的 objectid
+ * _rels/.rels                      → points to /3D/3dmodel.model
+ * 3D/3dmodel.model                 → one <object> containing one <component> per part
+ * 3D/_rels/3dmodel.model.rels      → points to /3D/Objects/object_1.model
+ * 3D/Objects/object_1.model        → one <object> per part, holding the actual mesh
+ * Metadata/model_settings.config   → <part id="N" subtype="..."> matches the component's objectid
  * ```
  *
- * 關鍵對應關係：`<component objectid="N">` 的 N 就是 `<part id="N">` 的 N。
+ * The key mapping: the N in `<component objectid="N">` is the N in `<part id="N">`.
  */
 
 /**
- * 零件類型。
+ * Part type.
  *
- * 字串取自 BambuStudio 原始碼 `src/libslic3r/Model.cpp` 的
- * `ModelVolume::type_to_string()`，五個值就是全部。
+ * The strings come from `ModelVolume::type_to_string()` in the BambuStudio source
+ * `src/libslic3r/Model.cpp`; these five values are all of them.
  *
- * **這個型別必須保持封閉。** 讀取端 `ModelVolume::type_from_string()` 對認不得的字串
- * 是靜默回退成 `MODEL_PART`：
+ * **This type must stay closed.** On the read side, `ModelVolume::type_from_string()` silently
+ * falls back to `MODEL_PART` for any string it does not recognise:
  *
  * ```cpp
  * // Default value if invalud type string received.
  * return ModelVolumeType::MODEL_PART;
  * ```
  *
- * 所以 `negative_part` 只要拼錯一個字母，就會從「挖掉一塊」變成「加上一塊實心」——
- * 不會有任何錯誤訊息。實測同一塊幾何：標 `negative_part` 讓 20 mm 立方體變成 15 mm 高，
- * 標 `normal_part` 讓它變成 25 mm 高。所以絕不接受未經驗證的字串。
+ * So a single typo in `negative_part` turns "cut a piece away" into "add a solid piece" — with
+ * no error message at all. Measured on the same geometry: tagging it `negative_part` made a 20 mm
+ * cube 15 mm tall, tagging it `normal_part` made it 25 mm tall. Never accept an unvalidated string.
  */
 export const PART_SUBTYPES = [
   'normal_part',
@@ -60,14 +61,14 @@ export type ModelPart = {
   readonly name: string;
   readonly subtype: PartSubtype;
   readonly mesh: IndexedMesh;
-  /** 零件層級設定，主要給 `modifier_part` 用；key 與 process preset 同一套命名空間。 */
+  /** Per-part settings, mainly for `modifier_part`; keys share the process preset namespace. */
   readonly settings?: Readonly<Record<string, PresetValue>>;
 };
 
 export type ProjectOptions = {
   readonly objectName: string;
   readonly parts: readonly ModelPart[];
-  /** 物件在列印板上的落點，預設為 256×256 板的中心。 */
+  /** Where the object lands on the plate; defaults to the centre of a 256×256 plate. */
   readonly plateCentre?: { readonly x: number; readonly y: number };
   readonly application?: string;
 };
@@ -85,32 +86,32 @@ const NAMESPACES =
   'xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06" ' +
   'requiredextensions="p"';
 
-/** 3MF 的 component transform 是 row-major 4×3，最後三個數是位移。 */
+/** A 3MF component transform is row-major 4×3; the last three numbers are the translation. */
 const IDENTITY_COMPONENT_TRANSFORM = '1 0 0 0 1 0 0 0 1 0 0 0';
-/** model_settings.config 的 matrix 是 row-major 4×4。 */
+/** The matrix in model_settings.config is row-major 4×4. */
 const IDENTITY_PART_MATRIX = '1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1';
 
 const OBJECTS_PATH = '/3D/Objects/object_1.model';
-/** 容器物件的 id 要避開零件用的 id。 */
+/** The container object's id must not collide with the ids used for parts. */
 const CONTAINER_OBJECT_ID = 1000;
 
 export function buildBambuProject(options: ProjectOptions): Buffer {
   const { parts } = options;
 
   if (parts.length === 0) {
-    throw new ThreeMfBuildError('至少要有一個零件。');
+    throw new ThreeMfBuildError('At least one part is required.');
   }
   if (parts[0]?.subtype !== 'normal_part') {
     throw new ThreeMfBuildError(
-      '第一個零件必須是 normal_part —— 沒有實體本體時，挖除體與修飾體沒有作用對象。',
+      'The first part must be a normal_part — without a solid body, negative parts and modifiers have nothing to act on.',
     );
   }
   for (const part of parts) {
     if (!isPartSubtype(part.subtype)) {
-      throw new ThreeMfBuildError(`不合法的零件類型：${String(part.subtype)}`);
+      throw new ThreeMfBuildError(`Invalid part subtype: ${String(part.subtype)}`);
     }
     if (part.mesh.triangles.length === 0) {
-      throw new ThreeMfBuildError(`零件「${part.name}」沒有任何三角形。`);
+      throw new ThreeMfBuildError(`Part "${part.name}" has no triangles.`);
     }
   }
 
@@ -131,7 +132,7 @@ export function buildBambuProject(options: ProjectOptions): Buffer {
   ]);
 }
 
-/** 零件 id 由 1 起算，與 `<component objectid>` 一致。 */
+/** Part ids start at 1, matching `<component objectid>`. */
 function partId(index: number): number {
   return index + 1;
 }
@@ -253,10 +254,10 @@ const OBJECTS_RELS = `<?xml version="1.0" encoding="UTF-8"?>
 </Relationships>
 `;
 
-/** 避免 `1e-7` 這類科學記號跑進 XML —— 3MF 解析器不一定接受。 */
+/** Keep scientific notation such as `1e-7` out of the XML — not every 3MF parser accepts it. */
 function num(value: number): string {
   if (!Number.isFinite(value)) {
-    throw new ThreeMfBuildError(`座標不是有限數值：${value}`);
+    throw new ThreeMfBuildError(`Coordinate is not a finite number: ${value}`);
   }
   const rounded = Number.parseFloat(value.toFixed(6));
   return Object.is(rounded, -0) ? '0' : String(rounded);
@@ -276,11 +277,12 @@ function escapeXml(value: string): string {
 }
 
 /**
- * STL 的三角形湯轉成索引式網格。
+ * Converts an STL triangle soup into an indexed mesh.
  *
- * STL 每個三角形各自帶三個頂點，同一個頂點會重複出現六次以上。
- * 3MF 要的是頂點清單 + 索引，所以要去重。座標量化到 1e-5 mm 再比對 ——
- * 直接比浮點值會因為匯出精度而讓應該相同的頂點對不起來，網格就會裂開。
+ * Every STL triangle carries its own three vertices, so the same vertex appears six or more
+ * times. 3MF wants a vertex list plus indices, so vertices have to be deduplicated. Coordinates
+ * are quantised to 1e-5 mm before comparing — comparing raw floats lets export precision keep
+ * vertices that should be identical apart, and the mesh cracks open.
  */
 export function trianglesToIndexedMesh(triangles: readonly Triangle[]): IndexedMesh {
   const QUANTUM = 1e5;
@@ -302,7 +304,7 @@ export function trianglesToIndexedMesh(triangles: readonly Triangle[]): IndexedM
     const a = idOf(triangle.a);
     const b = idOf(triangle.b);
     const c = idOf(triangle.c);
-    // 退化面（兩個頂點量化後重合）不寫進 3MF，切片器會抱怨。
+    // Degenerate faces (two vertices coincide after quantisation) are left out of the 3MF; the slicer complains about them.
     if (a === b || b === c || a === c) continue;
     faces.push([a, b, c]);
   }
@@ -310,12 +312,12 @@ export function trianglesToIndexedMesh(triangles: readonly Triangle[]): IndexedM
   return { vertices, triangles: faces };
 }
 
-// ── 讀回 ─────────────────────────────────────────────────────────────────
+// ── Reading back ──────────────────────────────────────────────────────────
 
 export type ProjectPart = {
   readonly id: string;
   readonly subtype: string;
-  /** subtype 是否為 BambuStudio 認得的五個值之一。 */
+  /** Whether the subtype is one of the five values BambuStudio recognises. */
   readonly recognised: boolean;
   readonly name: string | undefined;
   readonly settings: Readonly<Record<string, string>>;
@@ -328,13 +330,15 @@ export type ProjectObject = {
 };
 
 /**
- * 從 3MF 的 `Metadata/model_settings.config` 讀回物件與零件結構。
+ * Reads the object and part structure back from a 3MF's `Metadata/model_settings.config`.
  *
- * 這是「寫進去的東西真的在裡面嗎」的驗證手段，也是 GUI 自動化拿不到的東西：
- * 檔案可以解壓縮逐項比對，畫面只能截圖用看的。
+ * This is how we verify "is what we wrote actually in there", and it is something GUI
+ * automation cannot give you: a file can be unzipped and compared item by item, a screen can
+ * only be screenshotted and eyeballed.
  *
- * 用正規表示式而不是完整 XML 解析器：這份檔案是機器產生的，結構極穩定，
- * 而為了讀它引入一個 XML 依賴不划算。遇到解不出來的內容一律回傳空結果，不猜。
+ * Regular expressions rather than a full XML parser: the file is machine-generated with a very
+ * stable structure, and pulling in an XML dependency just to read it is not worth it. Anything
+ * that cannot be parsed yields an empty result; we do not guess.
  */
 export function readProjectStructure(modelSettingsXml: string): readonly ProjectObject[] {
   const objects: ProjectObject[] = [];
@@ -369,7 +373,7 @@ export function readProjectStructure(modelSettingsXml: string): readonly Project
       });
     }
 
-    // 物件自身的 name 在 <part> 之外的第一個 metadata。
+    // The object's own name is the first metadata outside any <part>.
     const objectName = /<metadata\s+key="name"\s+value="([^"]*)"\s*\/>/.exec(body)?.[1];
 
     objects.push({

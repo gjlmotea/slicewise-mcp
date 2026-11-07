@@ -12,21 +12,24 @@ import { defaultDataDir } from '../dist/adapters/node-preset-store.js';
 import { defaultExecutablePath } from '../dist/adapters/bambu-studio-cli.js';
 
 /**
- * 對真實安裝的 Bambu Studio 做端到端驗證。
+ * End-to-end verification against a real Bambu Studio installation.
  *
- * 與 `stdio-smoke.mjs` 的差別：smoke 用 fixture、任何機器都能跑；這支需要本機真的裝了
- * Bambu Studio，會實際啟動切片器並產生 3MF。因此**不納入 `pnpm verify`**，
- * 由人在有安裝的機器上手動執行。
+ * Difference from `stdio-smoke.mjs`: the smoke test uses fixtures and runs on any machine; this one
+ * needs Bambu Studio actually installed locally, launches the slicer and produces 3MF files. It is
+ * therefore **not part of `pnpm verify`** and is run by hand on a machine that has it installed.
  *
- * 它證明六件事：
- *   1. preset 繼承鏈展平後，切片結果採用的是原廠 preset 的真值而不是執行檔內建預設值
- *   2. 機型有 G-code 模板時，產物的開機 G-code 是那份模板，不是 fdm_machine_common 的通用開機段
- *   3. 參數覆寫真的落到產物上（而不是被靜默忽略）
- *   4. 覆寫稽核會誠實回報沒生效的項目
- *   5. negative_part 真的改變幾何（判準：max_z_height）
- *   6. modifier_part 的參數只作用在它涵蓋的區域（判準：同層填充路徑長度的左右分布）
+ * It proves six things:
+ *   1. After the preset inheritance chain is flattened, slicing uses the system preset's real values,
+ *      not the executable's built-in defaults
+ *   2. When the printer model has a G-code template, the output's start G-code is that template,
+ *      not the generic start section from fdm_machine_common
+ *   3. Parameter overrides actually reach the output (rather than being silently ignored)
+ *   4. The override audit honestly reports overrides that were not honoured
+ *   5. negative_part really changes the geometry (criterion: max_z_height)
+ *   6. modifier_part settings apply only to the region it covers
+ *      (criterion: left/right split of infill path length within one layer)
  *
- * 用法：
+ * Usage:
  *   node scripts/verify-real-slicer.mjs
  *   node scripts/verify-real-slicer.mjs --machine "Bambu Lab X1 Carbon 0.4 nozzle" \
  *     --process "0.20mm Standard @BBL X1C" --filament "Bambu PLA Basic @BBL X1C"
@@ -43,8 +46,8 @@ const dataDir = arg('data-dir', defaultDataDir());
 const slicerPath = arg('slicer', defaultExecutablePath());
 
 if (!existsSync(slicerPath)) {
-  console.error(`找不到 Bambu Studio 執行檔：${slicerPath}`);
-  console.error('這支腳本需要真的安裝 Bambu Studio。用 --slicer 指定路徑，或改跑 pnpm smoke。');
+  console.error(`Bambu Studio executable not found: ${slicerPath}`);
+  console.error('This script needs a real Bambu Studio installation. Pass the path with --slicer, or run pnpm smoke instead.');
   process.exit(2);
 }
 
@@ -75,25 +78,25 @@ try {
   await client.connect(transport);
 
   const status = await call('bambu_get_status', {});
-  assert.equal(status.slicerAvailable, true, '切片器應可用');
-  console.log(`資料目錄 ${status.dataDir}`);
+  assert.equal(status.slicerAvailable, true, 'the slicer should be available');
+  console.log(`Data directory ${status.dataDir}`);
   console.log(
-    `可選用 preset：machine ${status.presetCounts.machine}／process ${status.presetCounts.process}／filament ${status.presetCounts.filament}`,
+    `Selectable presets: machine ${status.presetCounts.machine} / process ${status.presetCounts.process} / filament ${status.presetCounts.filament}`,
   );
 
   const machine = arg('machine', status.currentSelection.machine);
   const process_ = arg('process', status.currentSelection.process);
   const filament = arg('filament', status.currentSelection.filaments?.[0]);
-  assert.ok(machine && process_ && filament, '找不到可用的 preset 組合，請用 --machine/--process/--filament 指定');
-  console.log(`使用 ${machine} ／ ${process_} ／ ${filament}\n`);
+  assert.ok(machine && process_ && filament, 'no usable preset combination found; specify one with --machine/--process/--filament');
+  console.log(`Using ${machine} / ${process_} / ${filament}\n`);
 
-  // ── 1. 展平 ───────────────────────────────────────────────────────────
+  // ── 1. Flatten ────────────────────────────────────────────────────────
   const resolved = await call('bambu_resolve_preset', { name: process_, kind: 'process' });
-  console.log(`繼承鏈：${resolved.inheritanceChain.join('  <-  ')}`);
-  console.log(`展平後 ${resolved.settingCount} 個設定\n`);
-  assert.ok(resolved.inheritanceChain.length > 1, '原廠 process preset 應該有繼承鏈');
+  console.log(`Inheritance chain: ${resolved.inheritanceChain.join('  <-  ')}`);
+  console.log(`${resolved.settingCount} settings after flattening\n`);
+  assert.ok(resolved.inheritanceChain.length > 1, 'a system process preset should have an inheritance chain');
 
-  // 這幾個參數全都繼承自上層，葉節點自己沒有宣告 —— 正是 CLI 會弄丟的那一類。
+  // These parameters are all inherited from parents and not declared by the leaf preset itself; exactly the kind the CLI loses.
   const INHERITED_KEYS = [
     'sparse_infill_density',
     'top_shell_layers',
@@ -101,7 +104,7 @@ try {
     'brim_width',
   ];
 
-  // ── 2. 基準切片，並讀回實際生效的值 ───────────────────────────────────
+  // ── 2. Baseline slice, reading back the values actually applied ──────
   const baseline = await call('bambu_slice', {
     modelPath: join(workDir, 'cube.stl'),
     machinePreset: machine,
@@ -109,49 +112,50 @@ try {
     filamentPresets: [filament],
     reportSettings: [...INHERITED_KEYS, 'machine_start_gcode'],
   });
-  assert.equal(baseline.ok, true, `基準切片失敗：${baseline.reason ?? ''}`);
+  assert.equal(baseline.ok, true, `baseline slice failed: ${baseline.reason ?? ''}`);
   console.log(
-    `基準：${baseline.stats.layerCount} 層、${baseline.stats.totalEstimatedTimeSeconds}s、${baseline.stats.filamentGrams} g\n`,
+    `Baseline: ${baseline.stats.layerCount} layers, ${baseline.stats.totalEstimatedTimeSeconds}s, ${baseline.stats.filamentGrams} g\n`,
   );
 
-  // ── 核心斷言 ─────────────────────────────────────────────────────────
-  // 產物實際採用的值，必須等於展平後的原廠 preset 值。
-  // 若把原始 preset 直接餵給 CLI（也就是所有現有工具的做法），這些繼承來的參數
-  // 會全部掉回 BambuStudio 執行檔內建的預設值 —— 那就是 BambuStudio#1704。
-  console.log('繼承而來的參數 —— preset 展平值 vs 產物實際值：');
+  // ── Core assertion ───────────────────────────────────────────────────
+  // The values the output actually uses must equal the flattened system preset values.
+  // If the raw preset were fed straight to the CLI (which is what every existing tool does), these
+  // inherited parameters would all fall back to the BambuStudio executable's built-in defaults;
+  // that is BambuStudio#1704.
+  console.log('Inherited parameters: flattened preset value vs actual output value:');
   for (const key of INHERITED_KEYS) {
     const expected = resolved.settings[key];
     const actual = baseline.appliedSettings[key];
     const same = normalise(expected) === normalise(actual);
-    console.log(`  ${same ? '✓' : '✗'} ${key}: preset ${JSON.stringify(expected)} → 產物 ${JSON.stringify(actual)}`);
+    console.log(`  ${same ? '✓' : '✗'} ${key}: preset ${JSON.stringify(expected)} → output ${JSON.stringify(actual)}`);
     assert.ok(
       same,
-      `${key} 沒有沿用原廠 preset 的值（preset ${JSON.stringify(expected)}，產物 ${JSON.stringify(actual)}）。` +
-        '這代表繼承展平失效了。',
+      `${key} did not keep the system preset value (preset ${JSON.stringify(expected)}, output ${JSON.stringify(actual)}). ` +
+        'This means inheritance flattening is broken.',
     );
   }
 
-  // BambuStudio 02.07 起機型 G-code 存在「<preset> template <key>」條目裡，葉節點本身沒有。
-  // 沒套到模板時，產物會拿 fdm_machine_common 的通用開機段（G28／G29／M109 S205）。
+  // Since BambuStudio 02.07, printer-model G-code lives in "<preset> template <key>" entries, not in the leaf preset.
+  // If the template is not applied, the output gets the generic start section from fdm_machine_common (G28 / G29 / M109 S205).
   const machineGcode = await call('bambu_resolve_preset', {
     name: machine,
     kind: 'machine',
     keys: ['machine_start_gcode'],
   });
   const startSource = machineGcode.provenance.machine_start_gcode;
-  console.log(`\n開機 G-code 來源：${startSource}`);
+  console.log(`\nStart G-code source: ${startSource}`);
   if (startSource?.includes(' template ')) {
     assert.equal(
       baseline.appliedSettings.machine_start_gcode,
       machineGcode.settings.machine_start_gcode,
-      '產物的開機 G-code 必須是原廠模板；不等代表模板沒套到，切出來的是通用開機段。',
+      'the output start G-code must be the system template; a mismatch means the template was not applied and the generic start section was used.',
     );
-    console.log('  ✓ 產物的開機 G-code 與原廠模板逐字相同');
+    console.log('  ✓ output start G-code is identical to the system template');
   } else {
-    console.log('  （這台機型沒有 G-code 模板，跳過）');
+    console.log('  (this printer model has no G-code template; skipped)');
   }
 
-  // ── 3. 覆寫 + 稽核 ────────────────────────────────────────────────────
+  // ── 3. Overrides + audit ──────────────────────────────────────────────
   const tuned = await call('bambu_slice', {
     modelPath: join(workDir, 'cube.stl'),
     machinePreset: machine,
@@ -161,49 +165,49 @@ try {
       layer_height: '0.28',
       sparse_infill_density: '10%',
       wall_loops: '4',
-      layer_hieght: '0.3', // 故意打錯，驗證會被抓出來
+      layer_hieght: '0.3', // deliberately misspelled, to verify it gets caught
     },
   });
   if (tuned.ok !== true) {
-    console.error(`\n覆寫切片失敗：${tuned.reason}`);
+    console.error(`\nOverride slice failed: ${tuned.reason}`);
     for (const line of tuned.stderrTail ?? []) console.error(`  ${line}`);
   }
-  assert.equal(tuned.ok, true, `覆寫切片失敗：${tuned.reason ?? ''}`);
+  assert.equal(tuned.ok, true, `override slice failed: ${tuned.reason ?? ''}`);
   console.log(
-    `\n覆寫後：${tuned.stats.layerCount} 層、${tuned.stats.totalEstimatedTimeSeconds}s、層高 ${tuned.stats.layerHeight}`,
+    `\nWith overrides: ${tuned.stats.layerCount} layers, ${tuned.stats.totalEstimatedTimeSeconds}s, layer height ${tuned.stats.layerHeight}`,
   );
 
-  console.log('\n覆寫稽核：');
+  console.log('\nOverride audit:');
   for (const entry of tuned.overrideAudit) {
     console.log(
-      `  ${entry.honoured ? '✓' : '✗'} ${entry.key}: 要求 ${JSON.stringify(entry.requested)} → 產物 ${JSON.stringify(entry.applied)}`,
+      `  ${entry.honoured ? '✓' : '✗'} ${entry.key}: requested ${JSON.stringify(entry.requested)} → output ${JSON.stringify(entry.applied)}`,
     );
   }
 
   const byKey = Object.fromEntries(tuned.overrideAudit.map((entry) => [entry.key, entry]));
-  assert.equal(byKey['layer_height'].honoured, true, 'layer_height 覆寫必須生效');
-  assert.equal(byKey['sparse_infill_density'].honoured, true, 'sparse_infill_density 覆寫必須生效');
-  assert.equal(byKey['wall_loops'].honoured, true, 'wall_loops 覆寫必須生效');
-  assert.equal(byKey['layer_hieght'].honoured, false, '打錯的 key 必須被標為未生效');
+  assert.equal(byKey['layer_height'].honoured, true, 'the layer_height override must be honoured');
+  assert.equal(byKey['sparse_infill_density'].honoured, true, 'the sparse_infill_density override must be honoured');
+  assert.equal(byKey['wall_loops'].honoured, true, 'the wall_loops override must be honoured');
+  assert.equal(byKey['layer_hieght'].honoured, false, 'a misspelled key must be marked as not honoured');
 
-  // 層高從 0.2 變 0.28，層數必須真的減少。
+  // Layer height goes from 0.2 to 0.28, so the layer count must actually drop.
   assert.ok(
     tuned.stats.layerCount < baseline.stats.layerCount,
-    `層高調高後層數應減少：${baseline.stats.layerCount} -> ${tuned.stats.layerCount}`,
+    `layer count should drop after raising the layer height: ${baseline.stats.layerCount} -> ${tuned.stats.layerCount}`,
   );
-  assert.equal(tuned.stats.layerHeight, 0.28, 'G-code 標頭的層高必須等於要求值');
+  assert.equal(tuned.stats.layerHeight, 0.28, 'the layer height in the G-code header must equal the requested value');
 
-  console.log('\n警告：');
+  console.log('\nWarnings:');
   for (const warning of tuned.warnings) console.log(`  · ${warning}`);
 
-  // ── 4. 非破壞性零件（negative_part）────────────────────────────────────
+  // ── 4. Non-destructive parts (negative_part) ──────────────────────────
   //
-  // 這一段驗證的是：Bambu 的非破壞性編輯不需要幾何運算引擎，也不需要驅動 GUI ——
-  // 它就是「多一個零件加一個 subtype 標籤」。
+  // This section verifies that Bambu's non-destructive editing needs neither a geometry kernel
+  // nor GUI automation: it is simply "one more part plus a subtype tag".
   //
-  // 判準刻意選 max_z_height：negative 生效會把 20 mm 立方體削成 15 mm。
-  // 若 subtype 被忽略而當成 normal_part，高度會變 25 mm。兩種錯法都會被抓到。
-  console.log('\n── 非破壞性零件 ──');
+  // The criterion is deliberately max_z_height: an honoured negative part trims the 20 mm cube to 15 mm.
+  // If the subtype were ignored and treated as normal_part, the height would become 25 mm. Both failure modes are caught.
+  console.log('\n── Non-destructive parts ──');
 
   const composed = await call('bambu_compose_model', {
     name: 'e2e-topcut',
@@ -214,25 +218,25 @@ try {
         name: 'topcut',
         subtype: 'negative_part',
         shape: { kind: 'box', size: { x: 40, y: 40, z: 10 } },
-        position: { x: 10, y: 10, z: 20 }, // 立方體是 0–20，這塊蓋住 15–25
+        position: { x: 10, y: 10, z: 20 }, // the cube spans 0–20; this block covers 15–25
       },
     ],
   });
-  assert.ok(composed.outputPath, `組裝失敗：${JSON.stringify(composed)}`);
-  console.log(`組出 ${composed.outputPath}（${composed.byteLength} bytes）`);
+  assert.ok(composed.outputPath, `compose failed: ${JSON.stringify(composed)}`);
+  console.log(`Composed ${composed.outputPath} (${composed.byteLength} bytes)`);
   for (const part of composed.parts) {
-    console.log(`  ${part.subtype.padEnd(15)} ${part.name} — ${part.triangleCount} 面，與本體相交：${part.intersectsBody}`);
+    console.log(`  ${part.subtype.padEnd(15)} ${part.name} — ${part.triangleCount} faces, intersects body: ${part.intersectsBody}`);
   }
-  assert.equal(composed.parts[1].intersectsBody, true, '挖除體必須與本體相交才有效果');
+  assert.equal(composed.parts[1].intersectsBody, true, 'the negative part must intersect the body to have any effect');
 
-  // 讀回檔案確認標籤真的寫進去了 —— 這是檔案路線相對 GUI 的關鍵優勢。
+  // Read the file back to confirm the tag really was written; this is the key advantage of the file route over the GUI.
   const structure = await call('bambu_inspect_project', { projectPath: composed.outputPath });
   const parts = structure.objects[0].parts;
-  console.log(`讀回：${parts.map((p) => `${p.name}=${p.subtype}`).join('、')}`);
+  console.log(`Read back: ${parts.map((p) => `${p.name}=${p.subtype}`).join(', ')}`);
   assert.equal(parts.length, 2);
   assert.equal(parts[0].subtype, 'normal_part');
   assert.equal(parts[1].subtype, 'negative_part');
-  assert.ok(parts.every((p) => p.recognised), '所有 subtype 都必須是 BambuStudio 認得的');
+  assert.ok(parts.every((p) => p.recognised), 'every subtype must be one BambuStudio recognises');
 
   const cut = await call('bambu_slice', {
     modelPath: composed.outputPath,
@@ -240,30 +244,32 @@ try {
     processPreset: process_,
     filamentPresets: [filament],
   });
-  assert.equal(cut.ok, true, `挖除體切片失敗：${cut.reason ?? ''}`);
+  assert.equal(cut.ok, true, `negative-part slice failed: ${cut.reason ?? ''}`);
 
-  console.log(`\n基準立方體：max_z ${baseline.stats.maxZHeight} mm、${baseline.stats.layerCount} 層、${baseline.stats.filamentGrams} g`);
-  console.log(`挖掉頂部後：max_z ${cut.stats.maxZHeight} mm、${cut.stats.layerCount} 層、${cut.stats.filamentGrams} g`);
+  console.log(`\nBaseline cube: max_z ${baseline.stats.maxZHeight} mm, ${baseline.stats.layerCount} layers, ${baseline.stats.filamentGrams} g`);
+  console.log(`Top cut away: max_z ${cut.stats.maxZHeight} mm, ${cut.stats.layerCount} layers, ${cut.stats.filamentGrams} g`);
 
-  // 成品高度不會剛好等於模型高度：層高除不盡時最後一層會超出一點
-  // （0.16 層高、0.2 首層 → 0.2 + 124×0.16 = 20.04）。所以容許一層的公差。
+  // The printed height is not exactly the model height: when the layer height does not divide evenly,
+  // the last layer overshoots slightly (0.16 layer height, 0.2 first layer -> 0.2 + 124×0.16 = 20.04).
+  // So a tolerance of one layer is allowed.
   const tolerance = baseline.stats.layerHeight * 1.5;
   assert.ok(
     Math.abs(baseline.stats.maxZHeight - 20) < tolerance,
-    `基準立方體應該約 20 mm 高，實際 ${baseline.stats.maxZHeight}`,
+    `the baseline cube should be about 20 mm tall, got ${baseline.stats.maxZHeight}`,
   );
   assert.ok(
     Math.abs(cut.stats.maxZHeight - 15) < tolerance,
-    `negative_part 必須把高度削到約 15 mm，實際 ${cut.stats.maxZHeight}`,
+    `negative_part must trim the height to about 15 mm, got ${cut.stats.maxZHeight}`,
   );
-  assert.ok(cut.stats.filamentGrams < baseline.stats.filamentGrams, '削掉一塊之後耗材應該變少');
+  assert.ok(cut.stats.filamentGrams < baseline.stats.filamentGrams, 'filament usage should drop after cutting a piece away');
 
-  // ── 5. 局部參數區（modifier_part）──────────────────────────────────────
+  // ── 5. Local settings region (modifier_part) ──────────────────────────
   //
-  // 挖除體改的是幾何，修飾體改的是「那一塊區域用不同參數切」。後者無法從外形看出來，
-  // 所以判準改成空間性的：在同一層裡，被修飾體蓋住的那半邊，填充路徑長度必須明顯多於另一半。
-  // 只看總耗材不夠 —— 那無法排除「參數被套到整個物件」這種錯法。
-  console.log('\n── 局部參數區 ──');
+  // A negative part changes geometry; a modifier changes "slice that region with different settings".
+  // The latter cannot be seen from the outer shape, so the criterion is spatial: within one layer, the half
+  // covered by the modifier must have clearly more infill path length than the other half.
+  // Total filament alone is not enough; it cannot rule out "the settings were applied to the whole object".
+  console.log('\n── Local settings region ──');
 
   const modified = await call('bambu_compose_model', {
     name: 'e2e-modifier',
@@ -273,20 +279,20 @@ try {
       {
         name: 'dense-half',
         subtype: 'modifier_part',
-        // 立方體是 0–20；這塊只蓋住 x 0–10 那半邊。
+        // The cube spans 0–20; this block only covers the x 0–10 half.
         shape: { kind: 'box', size: { x: 10, y: 24, z: 24 } },
         position: { x: 5, y: 10, z: 10 },
         settings: { sparse_infill_density: '90%' },
       },
     ],
   });
-  assert.ok(modified.outputPath, `修飾體組裝失敗：${JSON.stringify(modified)}`);
+  assert.ok(modified.outputPath, `modifier compose failed: ${JSON.stringify(modified)}`);
 
   const modifierStructure = await call('bambu_inspect_project', { projectPath: modified.outputPath });
   const modifierPart = modifierStructure.objects[0].parts[1];
-  console.log(`讀回：${modifierPart.name}=${modifierPart.subtype}，設定 ${JSON.stringify(modifierPart.settings)}`);
+  console.log(`Read back: ${modifierPart.name}=${modifierPart.subtype}, settings ${JSON.stringify(modifierPart.settings)}`);
   assert.equal(modifierPart.subtype, 'modifier_part');
-  assert.equal(modifierPart.settings.sparse_infill_density, '90%', '零件層級設定必須寫進 3MF');
+  assert.equal(modifierPart.settings.sparse_infill_density, '90%', 'part-level settings must be written into the 3MF');
 
   const modifiedSlice = await call('bambu_slice', {
     modelPath: modified.outputPath,
@@ -294,33 +300,33 @@ try {
     processPreset: process_,
     filamentPresets: [filament],
   });
-  assert.equal(modifiedSlice.ok, true, `修飾體切片失敗：${modifiedSlice.reason ?? ''}`);
+  assert.equal(modifiedSlice.ok, true, `modifier slice failed: ${modifiedSlice.reason ?? ''}`);
 
   const split = measureInfillSplit(readGcodeFromProduct(modifiedSlice.outputPath), 10);
   console.log(
-    `填充路徑長度：修飾側 ${split.dense.toFixed(0)} mm、另一側 ${split.sparse.toFixed(0)} mm` +
-      `（比值 ${(split.dense / split.sparse).toFixed(2)}）`,
+    `Infill path length: modifier side ${split.dense.toFixed(0)} mm, other side ${split.sparse.toFixed(0)} mm` +
+      ` (ratio ${(split.dense / split.sparse).toFixed(2)})`,
   );
   console.log(
-    `耗材：基準 ${baseline.stats.filamentGrams} g → 局部加密 ${modifiedSlice.stats.filamentGrams} g`,
+    `Filament: baseline ${baseline.stats.filamentGrams} g → locally densified ${modifiedSlice.stats.filamentGrams} g`,
   );
 
   assert.ok(
     split.dense / split.sparse > 1.8,
-    `修飾側的填充應該明顯較密，實際比值只有 ${(split.dense / split.sparse).toFixed(2)}`,
+    `infill on the modifier side should be clearly denser, but the ratio is only ${(split.dense / split.sparse).toFixed(2)}`,
   );
   assert.ok(
     modifiedSlice.stats.filamentGrams > baseline.stats.filamentGrams,
-    '局部加密後耗材應該增加',
+    'filament usage should increase after local densification',
   );
 
-  console.log('\n✅ 真機端到端驗證通過。');
+  console.log('\nEnd-to-end verification against the real slicer passed.');
 } finally {
   await client.close();
   rmSync(workDir, { recursive: true, force: true });
 }
 
-/** 比較前正規化：`"15%"` 與 `"15"`、`"0.28"` 與 `"0.280000"` 是同一件事。 */
+/** Normalises before comparison: `"15%"` and `"15"`, `"0.28"` and `"0.280000"` mean the same thing. */
 function normalise(value) {
   if (value === undefined) return undefined;
   const text = Array.isArray(value) ? value.join(',') : String(value);
@@ -328,7 +334,7 @@ function normalise(value) {
   return /^-?\d*\.?\d+$/.test(trimmed) ? String(Number.parseFloat(trimmed)) : trimmed;
 }
 
-/** 從 .gcode.3mf 產物取出第一盤的 G-code。 */
+/** Extracts the first plate's G-code from a .gcode.3mf output. */
 function readGcodeFromProduct(path) {
   const buffer = readFileSync(path);
   let eocd = buffer.length - 22;
@@ -354,17 +360,18 @@ function readGcodeFromProduct(path) {
     }
     cursor += 46 + nameLength + extraLength + commentLength;
   }
-  throw new Error('產物裡找不到 plate_1.gcode');
+  throw new Error('plate_1.gcode not found in the output');
 }
 
 /**
- * 量出某一層裡「填充路徑長度」在左右兩半的分布。
+ * Measures how the infill path length within one layer splits between the left and right halves.
  *
- * 用來驗證修飾體是否真的只作用在它涵蓋的區域。切分點取該層所有填充點的 x 中位，
- * 所以不必知道模型落在列印板哪個位置。
+ * Used to verify that a modifier really applies only to the region it covers. The split point is the
+ * midpoint of the x range of that layer's infill segments, so there is no need to know where the
+ * model sits on the plate.
  *
- * 只算 `; FEATURE: Sparse infill` 的擠出移動 —— 牆與實心層在兩側都一樣多，
- * 混進來會把差異稀釋掉。
+ * Only extrusion moves under `; FEATURE: Sparse infill` are counted; walls and solid layers are the
+ * same on both sides and would dilute the difference.
  */
 function measureInfillSplit(gcode, targetZ) {
   const layers = new Map();
@@ -409,7 +416,7 @@ function measureInfillSplit(gcode, targetZ) {
       best = { z: layerZ, segments };
     }
   }
-  assert.ok(best !== null, '找不到含足夠填充路徑的層');
+  assert.ok(best !== null, 'no layer with enough infill paths found');
 
   const xs = best.segments.map((s) => s.midX).sort((a, b) => a - b);
   const splitAt = (xs[0] + xs[xs.length - 1]) / 2;

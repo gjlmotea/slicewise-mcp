@@ -10,7 +10,7 @@ const RESOLVED: Readonly<Record<PresetKind, PresetRecord>> = {
 };
 
 describe('routeOverrides', () => {
-  it('依參數實際所屬的 preset 分流', () => {
+  it('routes each parameter to the preset it actually belongs to', () => {
     const routed = routeOverrides(
       { layer_height: '0.28', nozzle_temperature: ['230'], printer_model: 'X' },
       RESOLVED,
@@ -21,45 +21,46 @@ describe('routeOverrides', () => {
     expect(routed.commandLine).toEqual([]);
   });
 
-  it('丟棄無法辨識的參數而不是送給 CLI', () => {
-    // 回歸測試：曾經把未知 key 當成 CLI flag 送出去，
-    // BambuStudio 遇到不認識的 flag 會讓整次切片失敗 —— 一個打錯字毀掉整次切片。
+  it('drops unrecognised parameters instead of sending them to the CLI', () => {
+    // Regression test: unknown keys used to be sent as CLI flags, and an unrecognised flag
+    // makes BambuStudio fail the whole slice, so a single typo ruined the entire slice.
     const routed = routeOverrides({ layer_hieght: '0.28' }, RESOLVED);
     expect(routed.dropped).toEqual(['layer_hieght']);
     expect(routed.commandLine).toEqual([]);
     expect(routed.buckets.process).toEqual({});
-    expect(routed.warnings[0]).toMatch(/不是 BambuStudio 的參數名稱/);
+    expect(routed.warnings[0]).toMatch(/is not a BambuStudio parameter name/);
   });
 
-  it('一個打錯的參數不影響其他正確的參數', () => {
-    const routed = routeOverrides({ layer_height: '0.28', 手滑: '1' }, RESOLVED);
+  it('one mistyped parameter does not affect the other, correct ones', () => {
+    const routed = routeOverrides({ layer_height: '0.28', oops_typo: '1' }, RESOLVED);
     expect(routed.buckets.process).toEqual({ layer_height: '0.28' });
-    expect(routed.dropped).toEqual(['手滑']);
+    expect(routed.dropped).toEqual(['oops_typo']);
   });
 
-  it('preset 沒載到時用 catalog 判斷歸屬，仍寫進正確的檔案', () => {
-    // ironing_type 是 catalog 收錄的 process 參數。就算這次載入的 process preset
-    // 剛好沒有這個 key，也應該寫進 process 檔而不是退回命令列 —— 寫檔比命令列可靠。
+  it('uses the catalog to decide ownership when the preset lacks the key, still writing to the right file', () => {
+    // ironing_type is a process parameter listed in the catalog. Even if the process preset
+    // loaded this time happens not to have the key, it should be written into the process file
+    // rather than falling back to the command line: writing the file is more reliable.
     const routed = routeOverrides({ ironing_type: 'top' }, { ...RESOLVED, process: {} });
     expect(routed.buckets.process).toEqual({ ironing_type: 'top' });
     expect(routed.commandLine).toEqual([]);
     expect(routed.dropped).toEqual([]);
   });
 
-  it('preset 與 catalog 都不認得、但確實是有效參數時才走命令列', () => {
-    // infill_direction 是真實存在的 BambuStudio 參數，但不在 catalog 精選內。
+  it('uses the command line only for valid parameters that neither the presets nor the catalog know', () => {
+    // infill_direction is a real BambuStudio parameter, but not in the curated catalog.
     const routed = routeOverrides({ infill_direction: '45' }, { ...RESOLVED, process: {} });
     expect(routed.commandLine).toEqual(['--infill-direction=45']);
     expect(routed.dropped).toEqual([]);
-    expect(routed.warnings[0]).toMatch(/不屬於任何已載入的 preset/);
+    expect(routed.warnings[0]).toMatch(/does not belong to any loaded preset/);
   });
 
-  it('命令列參數的底線轉成連字號', () => {
+  it('turns underscores into hyphens for command-line parameters', () => {
     const routed = routeOverrides({ enable_arc_fitting: '1' }, { ...RESOLVED, process: {} });
     expect(routed.commandLine).toEqual(['--enable-arc-fitting=1']);
   });
 
-  it('多噴頭陣列值以逗號串接', () => {
+  it('joins multi-nozzle array values with commas', () => {
     const routed = routeOverrides(
       { filament_flow_ratio: ['0.98', '1.0'] },
       { ...RESOLVED, filament: {} },
@@ -67,7 +68,7 @@ describe('routeOverrides', () => {
     expect(routed.commandLine).toEqual(['--filament-flow-ratio=0.98,1.0']);
   });
 
-  it('沒有覆寫時不產生任何警告', () => {
+  it('produces no warnings when there are no overrides', () => {
     const routed = routeOverrides({}, RESOLVED);
     expect(routed.warnings).toEqual([]);
     expect(routed.commandLine).toEqual([]);

@@ -74,13 +74,13 @@ export type BambuServiceDependencies = {
   readonly slicer: Slicer;
   readonly catalogs: readonly ModelCatalog[];
   readonly readModelFile: ModelFileReader;
-  /** 寫入輸出目錄；回傳完整路徑。未設定輸出目錄時為 undefined。 */
+  /** Writes into the output directory and returns the full path. Undefined when no output directory is configured. */
   readonly writeOutputFile?: (fileName: string, data: Buffer) => string;
   /**
-   * 允許讀取模型檔的根目錄。
+   * Root directories that model files may be read from.
    *
-   * 原則：不把任意檔案路徑暴露給 MCP Client。
-   * 空陣列代表未設定，所有讀檔工具一律拒絕。
+   * Principle: never expose arbitrary file paths to the MCP client.
+   * An empty array means nothing is configured, and every file-reading tool refuses.
    */
   readonly allowedModelRoots: readonly string[];
   readonly version: string;
@@ -102,7 +102,7 @@ export type ServiceStatus = {
   readonly allowedModelRoots: readonly string[];
   readonly outputConfigured: boolean;
   readonly catalogs: readonly { readonly source: string; readonly integration: string; readonly ready: boolean }[];
-  /** 這個 server 一律先展平 preset 繼承鏈再切片。 */
+  /** This server always flattens the preset inheritance chain before slicing. */
   readonly inheritanceFlattening: true;
 };
 
@@ -110,8 +110,8 @@ export class PathNotAllowedError extends Error {
   constructor(path: string, roots: readonly string[]) {
     super(
       roots.length === 0
-        ? `未設定 BAMBU_MODEL_DIR，拒絕讀取 ${path}。請在啟動設定中指定允許的模型目錄。`
-        : `${path} 不在允許的模型目錄內：${roots.join('、')}`,
+        ? `BAMBU_MODEL_DIR is not set; refusing to read ${path}. Set the allowed model directories in the server launch configuration.`
+        : `${path} is not inside an allowed model directory: ${roots.join(', ')}`,
     );
     this.name = 'PathNotAllowedError';
   }
@@ -132,8 +132,9 @@ export class BambuService {
       profileId: presets.profileId,
       slicerPath: slicer.executablePath,
       slicerAvailable: slicer.available(),
-      // 只算可實際選用的 preset。原廠索引裡有大量 fdm_* 中間層純粹供繼承，
-      // 把它們算進去會讓「你有幾個 preset 可以用」這個數字失真。
+      // Count only presets that can actually be selected. The system index contains many
+      // fdm_* intermediate layers that exist purely to be inherited from; counting them
+      // would distort the "how many presets can you use" number.
       presetCounts: {
         machine: countSelectable(presets.list('machine')),
         process: countSelectable(presets.list('process')),
@@ -173,10 +174,11 @@ export class BambuService {
   }
 
   /**
-   * 展平 preset 並回報每個值的來源層。
+   * Flattens a preset and reports which layer each value came from.
    *
-   * `keys` 可以只取關心的參數；不給就回全部（process 約 200 個 key，
-   * 全倒給模型意義不大，所以預設會被工具層限制）。
+   * `keys` narrows the result to the parameters you care about; without it everything is
+   * returned (a process preset has about 200 keys, and dumping them all on the model is
+   * rarely useful, so the tool layer limits this by default).
    */
   resolvePreset(name: string, kind: PresetKind, keys?: readonly string[]): ResolvedPreset {
     const resolved = this.#deps.presets.resolve(name, kind);
@@ -213,20 +215,21 @@ export class BambuService {
   }): { readonly result: WriteUserPresetResult; readonly warnings: readonly string[] } {
     const warnings: string[] = [];
 
-    // 對照父層檢查：覆寫一個父層沒有的 key，通常是打錯名字或放錯 preset 種類。
-    // BambuStudio 對不認識的 key 是靜默忽略，使用者會以為改了其實沒改，所以必須先講。
+    // Check against the parent: overriding a key the parent does not have usually means a
+    // misspelled name or the wrong preset kind. BambuStudio silently ignores keys it does not
+    // recognise, so the user would believe the change was made when it was not; say so up front.
     const parent = this.#deps.presets.resolve(request.inherits, request.kind);
     for (const [key, value] of Object.entries(request.overrides)) {
       if (!(key in parent.settings)) {
         if (!isKnownParameterKey(key)) {
-          warnings.push(`${key} 不是 BambuStudio 的參數名稱；請確認拼字。Bambu Studio 會靜默忽略它。`);
+          warnings.push(`${key} is not a BambuStudio parameter name; check the spelling. Bambu Studio silently ignores it.`);
         } else {
           const owner = ownerOf(key);
           warnings.push(owner === request.kind
-            ? `${key} 是有效的 ${request.kind} 參數，但父 preset 沒有宣告；請在切片產物中確認它有生效。`
-            : `${key} 是有效參數但不屬於 ${request.kind} preset` +
-                (owner === undefined ? '' : `（應該寫進 ${owner} preset）`) +
-                '；寫在這裡會被忽略。');
+            ? `${key} is a valid ${request.kind} parameter, but the parent preset does not declare it; check the sliced output to confirm it is honoured.`
+            : `${key} is a valid parameter but does not belong to a ${request.kind} preset` +
+                (owner === undefined ? '' : ` (it belongs in a ${owner} preset)`) +
+                '; it will be ignored here.');
         }
         continue;
       }
@@ -240,20 +243,21 @@ export class BambuService {
   }
 
   /**
-   * 建立一份保守的 print-in-place 使用者 process preset。
+   * Creates a conservative print-in-place user process preset.
    *
-   * 可以從原廠 preset 或既有使用者 preset 開始；後者會保留葉節點裡已存在的尺寸校正，
-   * 但輸出的繼承關係仍直接指向原廠 preset，避免累積多層使用者繼承。
+   * It can start from a system preset or an existing user preset. Starting from a user preset
+   * keeps the dimensional corrections already declared in its leaf, but the output still
+   * inherits directly from the system preset, so layers of user inheritance do not pile up.
    */
   optimizePrintInPlacePreset(request: OptimizePrintInPlaceRequest): OptimizePrintInPlaceResult {
     const sourcePreset = request.processPreset ?? this.#deps.currentSelection.process;
     if (sourcePreset === undefined) {
-      throw new Error('找不到目前的 process preset；請先在 Bambu Studio 選好，或明確指定 processPreset。');
+      throw new Error('No current process preset found; select one in Bambu Studio first, or pass processPreset explicitly.');
     }
 
     const sourceRaw = this.#deps.presets.readRaw(sourcePreset, 'process');
     if (sourceRaw === undefined) {
-      throw new Error(`找不到 process preset：${sourcePreset}`);
+      throw new Error(`Process preset not found: ${sourcePreset}`);
     }
 
     let basePreset = sourcePreset;
@@ -261,13 +265,13 @@ export class BambuService {
     if (sourceRaw.origin === 'user') {
       const parentName = sourceRaw.body['inherits'];
       if (typeof parentName !== 'string' || parentName.trim() === '') {
-        throw new Error(`使用者 preset「${sourcePreset}」沒有可辨識的原廠 inherits。`);
+        throw new Error(`User preset "${sourcePreset}" has no recognisable system preset in inherits.`);
       }
       const parentRaw = this.#deps.presets.readRaw(parentName, 'process');
       if (parentRaw?.origin !== 'system') {
         throw new Error(
-          `使用者 preset「${sourcePreset}」不是直接繼承原廠 preset；` +
-            '不自動展開多層使用者繼承，避免覆蓋來源不明的調整。',
+          `User preset "${sourcePreset}" does not inherit directly from a system preset; ` +
+            'multiple layers of user inheritance are not expanded automatically, to avoid overwriting adjustments of unknown origin.',
         );
       }
       basePreset = parentName;
@@ -278,7 +282,7 @@ export class BambuService {
     const optimized = optimizePrintInPlace(effective, preserved, {
       ...(request.includeBrimEars === undefined ? {} : { includeBrimEars: request.includeBrimEars }),
     });
-    const name = request.name?.trim() || `${sourcePreset} 自動穩定版`;
+    const name = request.name?.trim() || `${sourcePreset} auto-stable`;
     const saved = this.saveUserPreset({
       name,
       kind: 'process',
@@ -300,7 +304,7 @@ export class BambuService {
     };
   }
 
-  // ── 參數知識 ───────────────────────────────────────────────────────────
+  // ── parameter knowledge ───────────────────────────────────────────────────────────
 
   describeParameters(options: {
     readonly keys?: readonly string[];
@@ -329,12 +333,12 @@ export class BambuService {
     if (options.symptomId !== undefined) {
       const symptom = getSymptom(options.symptomId);
       return symptom === undefined
-        ? { matched: [], available, note: `沒有這個症狀代號：${options.symptomId}` }
+        ? { matched: [], available, note: `Unknown symptom id: ${options.symptomId}` }
         : { matched: [formatSymptom(symptom, options.material)], available, note: undefined };
     }
 
     if (options.symptom === undefined || options.symptom.trim() === '') {
-      return { matched: [], available, note: '請描述現象，或直接指定 symptomId。' };
+      return { matched: [], available, note: 'Describe the symptom, or pass a symptomId directly.' };
     }
 
     const matches = matchSymptoms(options.symptom);
@@ -343,8 +347,8 @@ export class BambuService {
         matched: [],
         available,
         note:
-          '沒有比對到已知症狀。刻意不做模糊猜測 —— 猜錯會給出讓情況更糟的建議。' +
-          '請從 available 挑一個 symptomId，或換個描述詞。',
+          'No known symptom matched. Fuzzy guessing is deliberately not done: a wrong guess gives advice that makes things worse. ' +
+          'Pick a symptomId from available, or describe it in different words.',
       };
     }
 
@@ -355,7 +359,7 @@ export class BambuService {
     };
   }
 
-  // ── 切片 ───────────────────────────────────────────────────────────────
+  // ── slicing ───────────────────────────────────────────────────────────────
 
   async slice(request: {
     readonly modelPath: string;
@@ -377,8 +381,8 @@ export class BambuService {
       return {
         ok: false,
         reason:
-          '缺少 preset。請指定 machinePreset／processPreset／filamentPresets，' +
-          '或先在 Bambu Studio 選好機器與材料讓本 server 讀到預設值。',
+          'Missing presets. Specify machinePreset / processPreset / filamentPresets, ' +
+          'or select a printer and filament in Bambu Studio first so this server can read them as defaults.',
         stderrTail: [],
       };
     }
@@ -394,13 +398,15 @@ export class BambuService {
     });
   }
 
-  // ── 模型 ───────────────────────────────────────────────────────────────
+  // ── models ───────────────────────────────────────────────────────────────
 
   /**
-   * 幾何量測。STL、3MF 與 OBJ 都吃 —— 判斷看內容不看副檔名。
+   * Geometry measurements. Accepts STL, 3MF and OBJ; the format is detected from the
+   * content, not the file extension.
    *
-   * 3MF 會多回零件數與零件清單：多零件的 3MF 拿「合起來的體積」當單一實體看是會誤導的，
-   * 使用者要的通常是「這裡面有幾塊東西」。
+   * 3MF also returns the part count and part list: treating the combined volume of a
+   * multi-part 3MF as a single solid is misleading, and what the user usually wants to know
+   * is how many pieces are in there.
    */
   inspect(modelPath: string): ReturnType<typeof inspectModel> & {
     readonly format: MeshFileFormat;
@@ -411,11 +417,12 @@ export class BambuService {
     const mesh = loadMesh(this.#deps.readModelFile(path), basename(path));
     const combined = inspectModel(mesh.triangles);
 
-    // 封閉性必須逐零件算，不能把所有三角形倒在一起算。
+    // Closedness must be computed per part, not over all triangles pooled together.
     //
-    // 多零件 3MF 常有貼合的切面：兩個零件在同一個平面上各有一片三角形，邊完全重合。
-    // 合在一起數的話那條邊會被四個三角形共用，「恰好兩個」的判準就把它算成破洞 ——
-    // 行星齒輪陀螺實測會冒出 3675 條假的開放邊，而每個零件其實都是封閉的。
+    // Multi-part 3MFs often have mating faces: two parts each have a triangle on the same
+    // plane with exactly coincident edges. Counted together, such an edge is shared by four
+    // triangles, and the "exactly two" rule reports it as a hole. On a planetary-gear fidget
+    // spinner this produced 3675 false open edges, even though every part is closed.
     const perPart = mesh.parts.map((part) => inspectModel(part.triangles));
     const openEdges = perPart.reduce((sum, part) => sum + part.openEdges, 0);
 
@@ -431,10 +438,11 @@ export class BambuService {
   }
 
   /**
-   * 零件之間的間隙。列印即組裝的模型能不能動就看這個。
+   * Clearance between parts. This is what decides whether a print-in-place model can move.
    *
-   * 只有 3MF 與 OBJ 有多零件資訊；STL 是單一三角形湯，沒有零件邊界可分，所以會直說量不了，
-   * 而不是回一個看起來像答案的空報告。
+   * Only 3MF and OBJ carry multi-part information; STL is a single triangle soup with no part
+   * boundaries, so this says plainly that it cannot measure, rather than returning an empty
+   * report that looks like an answer.
    */
   measureClearance(
     modelPath: string,
@@ -449,8 +457,8 @@ export class BambuService {
 
     if (mesh.format === 'stl') {
       throw new Error(
-        'STL 沒有零件邊界，量不出零件之間的間隙 —— 整個檔案就是一堆沒有分組的三角形。' +
-          '請改用 3MF（Bambu 專案檔或多零件 3MF；MakerWorld 與 Bambu Studio 匯出的都是）或 OBJ（Tinkercad 的彩色匯出）。',
+        'STL has no part boundaries, so clearance between parts cannot be measured: the whole file is one ungrouped pile of triangles. ' +
+          'Use 3MF instead (a Bambu project or multi-part 3MF; MakerWorld downloads and Bambu Studio exports are both this) or OBJ (Tinkercad colour export).',
       );
     }
 
@@ -491,14 +499,17 @@ export class BambuService {
     );
   }
 
-  // ── 目標導向規劃 ───────────────────────────────────────────────────────
+  // ── goal-driven planning ───────────────────────────────────────────────────────
 
   /**
-   * 依目標排出一組參數調整，並在有模型時依幾何追加條件式調整。
+   * Lays out a set of parameter adjustments for a goal, and when a model is given, adds
+   * conditional adjustments based on its geometry.
    *
-   * 會一併回報每個參數「目前的值」以及它的形狀。形狀很重要：不少參數在 preset 裡是
-   * 每噴頭一項的陣列（例如 `filament_z_hop` 是 `["nil","0.6"]`，`"nil"` 是字面值代表未設定），
-   * 拿一個純量去覆寫多噴頭參數會落空。把現況擺在建議旁邊，才不會調了個寂寞。
+   * Each parameter's current value and its shape are reported alongside. The shape matters:
+   * many parameters are per-nozzle arrays in the preset (e.g. `filament_z_hop` is
+   * `["nil","0.6"]`, where `"nil"` is a literal meaning "not set"), and overriding a
+   * multi-nozzle parameter with a scalar does nothing. Putting the current state next to the
+   * suggestion keeps you from making a change that has no effect.
    */
   planSettings(request: PlanRequest): PlanResult {
     const goal =
@@ -518,12 +529,12 @@ export class BambuService {
         printability: undefined,
         note:
           request.goal === undefined && request.goalId === undefined
-            ? '請說明你要什麼（例如「不要印壞、慢慢印」或「趕時間」），或直接指定 goalId。'
-            : '沒有比對到已知目標。刻意不猜 —— 目標猜錯會把整組參數往反方向調。請從 available 挑一個。',
+            ? 'Say what you want (e.g. "don\'t fail, print slowly" or "in a hurry"), or pass a goalId directly.'
+            : 'No known goal matched. Guessing is deliberately not done: a wrong goal pushes the whole set of parameters the wrong way. Pick one from available.',
       };
     }
 
-    // 有模型就先看幾何，用來觸發條件式調整。
+    // If there is a model, look at its geometry first; it triggers the conditional adjustments.
     let printability: PrintabilityReport | undefined;
     if (request.modelPath !== undefined) {
       printability = this.checkPrintability(request.modelPath);
@@ -536,7 +547,7 @@ export class BambuService {
 
     const resolved = this.#resolveForLookup(request);
 
-    // 兩份清單分開映射，避免 union 把 ConditionalMove 專屬的欄位型別擦掉。
+    // Map the two lists separately so a union does not erase the fields specific to ConditionalMove.
     const describe = (move: GoalMove, trigger?: ConditionalMove): PlannedMove => {
       const current = lookupCurrent(move.key, resolved);
       const spec = describeParameter(move.key);
@@ -585,7 +596,7 @@ export class BambuService {
     };
   }
 
-  /** 只解析呼叫端指定的 preset；沒指定就退回 Studio 目前的選擇，都沒有就不查現值。 */
+  /** Resolves only the presets the caller named; falls back to Studio's current selection, and skips current-value lookup when neither exists. */
   #resolveForLookup(request: PlanRequest): Partial<Record<PresetKind, PresetRecord>> {
     const out: Partial<Record<PresetKind, PresetRecord>> = {};
     const processName = request.processPreset ?? this.#deps.currentSelection.process;
@@ -599,24 +610,25 @@ export class BambuService {
       try {
         out[kind] = this.#deps.presets.resolve(name, kind).settings;
       } catch {
-        // preset 名稱不存在時不讓整個規劃失敗；現值留空即可。
+        // A missing preset name must not fail the whole plan; leave the current values empty.
       }
     }
     return out;
   }
 
-  // ── 組裝 3MF ───────────────────────────────────────────────────────────
+  // ── 3MF composition ───────────────────────────────────────────────────────────
 
   /**
-   * 用「本體 + 附加零件」組出一個 Bambu 專案 3MF。
+   * Builds a Bambu project 3MF from a body plus additional parts.
    *
-   * 這是非破壞性編輯：挖除體、局部參數區與支撐強制／阻擋在 Bambu 的模型裡就是
-   * 「多一個零件加一個 subtype 標籤」，不需要幾何運算引擎，也不需要驅動 GUI。
+   * This is a non-destructive edit: in Bambu's model, negative volumes, modifier regions and
+   * support enforcers/blockers are each just one more part with a subtype tag, so no geometry
+   * (CSG) engine is needed and the GUI does not have to be driven.
    */
   composeModel(request: ComposeRequest): ComposeResult {
     const write = this.#deps.writeOutputFile;
     if (write === undefined) {
-      throw new Error('未設定 BAMBU_OUTPUT_DIR；不會寫入未經授權的目錄。');
+      throw new Error('BAMBU_OUTPUT_DIR is not set; refusing to write to a directory that was not authorised.');
     }
 
     const warnings: string[] = [];
@@ -641,9 +653,9 @@ export class BambuService {
     for (const spec of request.parts) {
       if (!isPartSubtype(spec.subtype)) {
         throw new Error(
-          `不合法的零件類型：${spec.subtype}。` +
-            'BambuStudio 對認不得的字串是靜默回退成 normal_part —— ' +
-            '「挖掉一塊」會變成「加上一塊實心」，而且不會有任何錯誤訊息。',
+          `Invalid part subtype: ${spec.subtype}. ` +
+            'BambuStudio silently falls back to normal_part for strings it does not recognise: ' +
+            '"cut a piece away" turns into "add a solid piece", with no error message at all.',
         );
       }
 
@@ -657,20 +669,20 @@ export class BambuService {
 
       if (!intersects) {
         warnings.push(
-          `零件「${spec.name}」與本體沒有交集，不會有任何效果。` +
-            `本體範圍 ${fmtBounds(baseBounds)}，此零件 ${fmtBounds(bounds)}。`,
+          `Part "${spec.name}" does not intersect the body and will have no effect. ` +
+            `Body bounds ${fmtBounds(baseBounds)}, this part ${fmtBounds(bounds)}.`,
         );
       }
 
       for (const key of Object.keys(spec.settings ?? {})) {
         if (!isKnownParameterKey(key)) {
-          warnings.push(`零件「${spec.name}」的設定 ${key} 不是 BambuStudio 的參數名稱，會被忽略。`);
+          warnings.push(`Setting ${key} on part "${spec.name}" is not a BambuStudio parameter name and will be ignored.`);
         }
       }
       if (spec.settings !== undefined && spec.subtype !== 'modifier_part') {
         warnings.push(
-          `零件「${spec.name}」帶了設定但類型是 ${spec.subtype}；` +
-            '零件層級設定只有 modifier_part 會生效。',
+          `Part "${spec.name}" carries settings but its subtype is ${spec.subtype}; ` +
+            'part-level settings are honoured only on modifier_part.',
         );
       }
 
@@ -701,17 +713,17 @@ export class BambuService {
     return { outputPath, parts: summaries, warnings, byteLength: buffer.length };
   }
 
-  /** 讀回 3MF 的物件與零件結構，用來確認寫進去的東西真的在裡面。 */
+  /** Reads back the object and part structure of a 3MF, to confirm that what was written is really in there. */
   inspectProject(projectPath: string): readonly ProjectObject[] {
     const path = this.#assertAllowed(projectPath);
     const entry = readZipEntry(this.#deps.readModelFile(path), 'Metadata/model_settings.config');
     if (entry === undefined) {
-      throw new Error(`${projectPath} 裡沒有 Metadata/model_settings.config；這不是 Bambu 專案 3MF。`);
+      throw new Error(`${projectPath} has no Metadata/model_settings.config; it is not a Bambu project 3MF.`);
     }
     return readProjectStructure(entry.toString('utf8'));
   }
 
-  // ── 搜尋 ───────────────────────────────────────────────────────────────
+  // ── search ───────────────────────────────────────────────────────────────
 
   async searchModels(
     query: string,
@@ -726,13 +738,13 @@ export class BambuService {
     return Promise.all(selected.map((catalog) => catalog.search(query, limit)));
   }
 
-  // ── 內部 ───────────────────────────────────────────────────────────────
+  // ── internals ───────────────────────────────────────────────────────────────
 
   /**
-   * 檔案路徑必須落在允許的根目錄內。
+   * The file path must fall inside an allowed root directory.
    *
-   * 用 `relative()` 判斷而不是字串 prefix 比對：後者會讓 `/models-evil` 通過
-   * `/models` 的檢查。同時解析 `..` 以防路徑穿越。
+   * Uses `relative()` rather than a string prefix comparison: the latter would let
+   * `/models-evil` pass the check for `/models`. `..` is also resolved to prevent path traversal.
    */
   #assertAllowed(candidate: string): string {
     const roots = this.#deps.allowedModelRoots;
@@ -810,7 +822,7 @@ export type OptimizePrintInPlaceResult = {
   readonly manualActions: readonly string[];
 };
 
-/** 只保留使用者 preset 葉節點裡真正的 process 覆寫，不把 metadata 帶進新檔。 */
+/** Keeps only the genuine process overrides from a user preset's leaf, without carrying metadata into the new file. */
 function extractDeclaredOverrides(
   body: Readonly<Record<string, unknown>>,
   parent: PresetRecord,
@@ -830,10 +842,11 @@ function extractDeclaredOverrides(
 }
 
 /**
- * 查一個參數目前的值與形狀。
+ * Looks up a parameter's current value and shape.
  *
- * 形狀決定覆寫要怎麼寫：`per-extruder` 的參數要給陣列，塞純量會落空。
- * 兩種 preset 都找不到時回 `unknown` —— 不是保證不存在，只是這兩份 preset 沒宣告。
+ * The shape decides how the override must be written: a `per-extruder` parameter needs an
+ * array, and a scalar does nothing. Returns `unknown` when neither preset has it; that does
+ * not guarantee the key does not exist, only that these two presets do not declare it.
  */
 function lookupCurrent(
   key: string,
@@ -889,11 +902,12 @@ export type ComposeResult = {
 };
 
 /**
- * 外框是否相交。
+ * Whether two bounding boxes intersect.
  *
- * 用來抓「挖除體擺錯位置、完全沒碰到本體」這種錯誤 —— 那會產生一個合法但毫無作用的
- * 3MF，切完發現什麼都沒變，卻不知道為什麼。外框相交不代表實體相交，
- * 所以只作警告不作阻擋。
+ * Catches mistakes like a negative volume placed where it never touches the body. That
+ * produces a valid but completely ineffective 3MF: after slicing nothing has changed and
+ * nobody knows why. Intersecting bounding boxes do not mean the solids intersect, so this
+ * only warns and never blocks.
  */
 function boundsOverlap(a: Bounds, b: Bounds): boolean {
   return (

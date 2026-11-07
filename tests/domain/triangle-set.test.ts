@@ -11,14 +11,16 @@ import type { Triangle } from '../../src/domain/model/stl.js';
 import { boxTriangles } from '../fixtures/geometry.js';
 
 /**
- * BVH 是整個間隙量測的地基，錯了不會爆炸、只會安靜地給錯數字。
+ * The BVH is the foundation of all clearance measurement; when it is wrong it does not blow
+ * up, it just quietly returns wrong numbers.
  *
- * 所以這裡的主測試是對拍：同一批查詢分別走 BVH 與暴力全掃，答案必須完全一致。
- * 這種測試抓得到「剪枝剪太多」——也就是把該找到的最近點跳過去 ——
- * 而那正是空間索引最容易寫錯、也最難靠肉眼發現的地方。
+ * So the main test here is a differential test: the same batch of queries goes through both
+ * the BVH and a brute-force full scan, and the answers must match exactly. This kind of test
+ * catches "over-pruning", i.e. skipping a closest point that should have been found, which is
+ * exactly where spatial indexes are easiest to get wrong and hardest to spot by eye.
  */
 
-/** 決定性的偽亂數，讓失敗可以重現。 */
+/** Deterministic pseudo-random numbers so failures are reproducible. */
 function makeRandom(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
@@ -36,7 +38,7 @@ function bruteForceNearest(triangles: readonly Triangle[], p: { x: number; y: nu
   return best;
 }
 
-/** 一顆用經緯度切出來的球，三角形大小不均，足以壓到 BVH 的分割邏輯。 */
+/** A sphere tessellated by latitude/longitude; uneven triangle sizes are enough to stress the BVH split logic. */
 function sphere(radius: number, centre: { x: number; y: number; z: number }, bands = 14): Triangle[] {
   const triangles: Triangle[] = [];
   const at = (u: number, v: number) => {
@@ -61,15 +63,15 @@ function sphere(radius: number, centre: { x: number; y: number; z: number }, ban
   return triangles;
 }
 
-describe('BVH 對拍暴力解', () => {
+describe('BVH versus brute force', () => {
   const shapes: readonly { name: string; triangles: readonly Triangle[] }[] = [
-    { name: '立方體', triangles: boxTriangles([20, 20, 20], [0, 0, 0]) },
-    { name: '球（三角形大小不均）', triangles: sphere(10, { x: 5, y: -3, z: 2 }) },
-    { name: '扁平薄板', triangles: boxTriangles([80, 80, 0.4], [-40, -40, 0]) },
+    { name: 'cube', triangles: boxTriangles([20, 20, 20], [0, 0, 0]) },
+    { name: 'sphere (uneven triangle sizes)', triangles: sphere(10, { x: 5, y: -3, z: 2 }) },
+    { name: 'flat thin plate', triangles: boxTriangles([80, 80, 0.4], [-40, -40, 0]) },
   ];
 
   for (const shape of shapes) {
-    it(`${shape.name}：查詢結果與全掃一致`, () => {
+    it(`${shape.name}: query results match a full scan`, () => {
       const set = new TriangleSet(shape.triangles);
       const random = makeRandom(20260823);
 
@@ -80,12 +82,13 @@ describe('BVH 對拍暴力解', () => {
           z: (random() - 0.5) * 120,
         };
         const expected = bruteForceNearest(shape.triangles, p);
-        // 搜尋上界故意設在真答案上下都有的位置，兩種情形都要測到。
+        // The search bound is deliberately placed both below and above the true answer, so both cases are tested.
         const limit = trial % 3 === 0 ? expected * 0.9 : expected + 5;
         const actual = set.nearestWithin(p, limit);
 
         if (limit <= expected) {
-          // 上界比真答案小，就必須誠實回報找不到，而不是硬給一個更遠的點。
+          // When the bound is below the true answer, it must honestly report nothing found rather
+          // than force out a farther point.
           expect(actual).toBeUndefined();
         } else {
           expect(actual).toBeDefined();
@@ -95,20 +98,20 @@ describe('BVH 對拍暴力解', () => {
     });
   }
 
-  it('拒絕無限大的搜尋上界，而不是安靜地退化成全掃', () => {
+  it('rejects an infinite search bound instead of quietly degrading into a full scan', () => {
     const set = new TriangleSet(boxTriangles([10, 10, 10], [0, 0, 0]));
-    expect(() => set.nearestWithin({ x: 0, y: 0, z: 0 }, Infinity)).toThrow(/有限/);
+    expect(() => set.nearestWithin({ x: 0, y: 0, z: 0 }, Infinity)).toThrow(/finite/);
   });
 
-  it('空的三角形集合不會爆炸', () => {
+  it('does not blow up on an empty triangle set', () => {
     const set = new TriangleSet([]);
     expect(set.nearestWithin({ x: 0, y: 0, z: 0 }, 10)).toBeUndefined();
     set.forEachNear(set.box, 1, () => {
-      throw new Error('空集合不該走訪到任何三角形');
+      throw new Error('an empty set should not visit any triangle');
     });
   });
 
-  it('forEachNear 涵蓋所有真的在範圍內的三角形', () => {
+  it('forEachNear covers every triangle that is actually in range', () => {
     const triangles = sphere(10, { x: 0, y: 0, z: 0 });
     const set = new TriangleSet(triangles);
     const query = { min: { x: 8, y: -2, z: -2 }, max: { x: 12, y: 2, z: 2 }, size: { x: 4, y: 4, z: 4 } };
@@ -118,7 +121,7 @@ describe('BVH 對拍暴力解', () => {
       visited.add(index);
     });
 
-    // 暴力算出「AABB 真的有交集」的清單，BVH 走訪必須是它的超集。
+    // Brute-force the list of triangles whose AABBs really intersect; the BVH visit must be a superset of it.
     for (let index = 0; index < triangles.length; index += 1) {
       if (boxDistance(set.boundsOf(index), query) <= 0.5) {
         expect(visited.has(index)).toBe(true);
@@ -127,15 +130,15 @@ describe('BVH 對拍暴力解', () => {
   });
 });
 
-describe('外框工具', () => {
-  it('boxDistance 重疊時為 0，分離時等於間隔', () => {
+describe('bounding-box helpers', () => {
+  it('boxDistance is 0 when overlapping and equals the spacing when separated', () => {
     const a = { min: { x: 0, y: 0, z: 0 }, max: { x: 1, y: 1, z: 1 }, size: { x: 1, y: 1, z: 1 } };
     const b = { min: { x: 3, y: 0, z: 0 }, max: { x: 4, y: 1, z: 1 }, size: { x: 1, y: 1, z: 1 } };
     expect(boxDistance(a, b)).toBeCloseTo(2, 9);
     expect(boxDistance(a, a)).toBe(0);
   });
 
-  it('enclosesXY 只看 XY，不管 Z', () => {
+  it('enclosesXY looks only at XY and ignores Z', () => {
     const outer = { min: { x: 0, y: 0, z: 0 }, max: { x: 10, y: 10, z: 1 }, size: { x: 10, y: 10, z: 1 } };
     const inner = { min: { x: 2, y: 2, z: 50 }, max: { x: 8, y: 8, z: 60 }, size: { x: 6, y: 6, z: 10 } };
     expect(enclosesXY(outer, inner)).toBe(true);

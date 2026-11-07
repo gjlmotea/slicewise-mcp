@@ -1,17 +1,20 @@
 import type { ModelCatalog, ModelSearchResult } from '../ports/model-catalog.js';
 
 /**
- * 沒有官方 API 的平台，只做「產生查詢連結」的人工交接。
+ * For platforms without an official API, the only thing done is a manual hand-off:
+ * generate a search link.
  *
- * 這是刻意的能力降級，不是還沒做完：
+ * This is a deliberate capability downgrade, not unfinished work:
  *
- * - **MakerWorld**：Bambu Lab 自家平台，至今沒有公開 API。社群多次要求皆未獲提供。
- *   它的搜尋端點對非瀏覽器來源回傳空結果，繞過去需要偽造 session state。
- * - **Printables**：有 GraphQL 端點但沒有官方開發者方案，隨時可能改動或封鎖。
+ * - **MakerWorld**: Bambu Lab's own platform, which still has no public API despite
+ *   repeated community requests. Its search endpoint returns empty results to
+ *   non-browser clients, and getting around that would mean forging session state.
+ * - **Printables**: has a GraphQL endpoint but no official developer programme, so it
+ *   may change or be blocked at any time.
  *
- * 本專案的原則是「不把瀏覽器自動化冒充 API」：
- * 官方沒有支援的整合介面時，狀態就是 unsupported，不用登入 cookie、
- * 私有 endpoint 或畫面 selector 繞過。所以這裡只回傳連結。
+ * This project's rule is "never pass off browser automation as an API": when there is
+ * no officially supported integration, the status is unsupported, and it is not worked
+ * around with login cookies, private endpoints or page selectors. So this only returns links.
  */
 
 export type HandoffCatalogDefinition = {
@@ -24,9 +27,9 @@ export const MAKERWORLD: HandoffCatalogDefinition = {
   source: 'makerworld',
   buildUrl: (query) => `https://makerworld.com/en/search/models?keyword=${encodeURIComponent(query)}`,
   notes: [
-    'MakerWorld 沒有公開 API；搜尋端點對非瀏覽器來源回傳空結果。',
-    '對 Bambu 機型而言它通常是最佳來源，因為模型附帶原廠列印 profile。',
-    '下載後可以把 .3mf／.stl 交給 bambu_inspect_model 與 bambu_slice 接手。',
+    'MakerWorld has no public API; its search endpoint returns empty results to non-browser clients.',
+    'For Bambu printers it is usually the best source, because models come with factory print profiles.',
+    'After downloading, pass the .3mf / .stl to bambu_inspect_model and bambu_slice.',
   ],
 };
 
@@ -34,8 +37,8 @@ export const PRINTABLES: HandoffCatalogDefinition = {
   source: 'printables',
   buildUrl: (query) => `https://www.printables.com/search/models?q=${encodeURIComponent(query)}`,
   notes: [
-    'Printables 的 GraphQL 端點沒有官方開發者方案，不納入自動查詢。',
-    '文件與 make 紀錄完整，適合需要驗證別人真的印成功過的情況。',
+    'Printables\' GraphQL endpoint has no official developer programme, so it is not queried automatically.',
+    'Documentation and make records are thorough, which suits cases where you need evidence that others have actually printed it successfully.',
   ],
 };
 
@@ -50,7 +53,7 @@ export class HandoffCatalog implements ModelCatalog {
   }
 
   ready(): boolean {
-    // 交接不需要憑證，永遠可用。
+    // A hand-off needs no credentials, so it is always available.
     return true;
   }
 

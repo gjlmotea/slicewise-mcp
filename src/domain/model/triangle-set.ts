@@ -2,18 +2,20 @@ import type { BoundingBox, Vec3 } from '../contracts.js';
 import type { Triangle } from './stl.js';
 
 /**
- * 一組三角形，附帶查詢用的 BVH（bounding volume hierarchy）。
+ * A set of triangles with a BVH (bounding volume hierarchy) for queries.
  *
- * 從 `clearance.ts` 拆出來是因為效能：原本每比對一組零件就重建一次索引，
- * 而行星齒輪陀螺的外齒圈有三萬多個三角形、要跟九個零件各比一次。
- * 索引跟著資料走、只建一次，才是對的歸屬。
+ * It was split out of `clearance.ts` for performance: the index used to be rebuilt for every
+ * pair of parts compared, and the ring gear of the planetary-gear fidget spinner has over
+ * 30,000 triangles and is compared against each of nine parts. The index belongs with the
+ * data and should be built only once.
  *
- * 為什麼是 BVH 而不是均勻網格：第一版用網格，實測 CPU profile 顯示
- * **96% 的時間花在 `nearestWithin` 自己身上，而不是幾何計算**——
- * 也就是說時間全耗在「掃過一格又一格的空格子」。均勻網格對這種資料是錯的結構：
- * 齒輪是薄殼，三角形集中在表面上，大部分格子是空的；而搜尋半徑一旦大一點，
- * 要掃的格數就以半徑的平方成長。BVH 的每一層都用實際佔用範圍剪枝，
- * 空的地方根本不會被走到。
+ * Why a BVH rather than a uniform grid: the first version used a grid, and a CPU profile
+ * showed **96% of the time spent in `nearestWithin` itself, not in geometry computation**;
+ * in other words, all the time went into "scanning one empty cell after another". A uniform
+ * grid is the wrong structure for this data: gears are thin shells, triangles cluster on the
+ * surface, and most cells are empty; and once the search radius grows a little, the number of
+ * cells to scan grows with the square of the radius. A BVH prunes at every level using the
+ * actually occupied extent, so empty space is never visited at all.
  */
 
 export function subtract(a: Vec3, b: Vec3): Vec3 {
@@ -36,11 +38,12 @@ export function distanceBetween(a: Vec3, b: Vec3): number {
 }
 
 /**
- * 點到三角形的最近點（Ericson, Real-Time Collision Detection §5.1.5）。
+ * Closest point on a triangle to a point (Ericson, Real-Time Collision Detection §5.1.5).
  *
- * 用頂點對頂點的距離近似會高估：兩個面對面的平坦齒面，最近的一對可能落在面內部而不是
- * 任何一個頂點上。列印即組裝的公差只有 0.1 mm 上下，高估 0.05 mm 就足以把「會黏死」
- * 誤判成「安全」，所以這裡算的是真正的點到面距離。
+ * Approximating with vertex-to-vertex distance overestimates: for two flat tooth flanks facing
+ * each other, the closest pair may lie inside the faces rather than on any vertex. Print-in-place
+ * tolerances are only around 0.1 mm, and overestimating by 0.05 mm is enough to misjudge
+ * "will fuse" as "safe", so this computes the true point-to-face distance.
  */
 export function closestPointOnTriangle(p: Vec3, t: Triangle): Vec3 {
   const ab = subtract(t.b, t.a);
@@ -84,7 +87,7 @@ export function closestPointOnTriangle(p: Vec3, t: Triangle): Vec3 {
   return scaleAdd(scaleAdd(t.a, ab, vb / denom), ac, vc / denom);
 }
 
-/** 兩個 AABB 之間的最小距離；重疊時為 0。這是剪枝用的下界，永遠不會高估。 */
+/** Minimum distance between two AABBs; 0 when they overlap. A lower bound for pruning that never overestimates. */
 export function boxDistance(a: BoundingBox, b: BoundingBox): number {
   const dx = Math.max(0, Math.max(a.min.x - b.max.x, b.min.x - a.max.x));
   const dy = Math.max(0, Math.max(a.min.y - b.max.y, b.min.y - a.max.y));
@@ -92,7 +95,7 @@ export function boxDistance(a: BoundingBox, b: BoundingBox): number {
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-/** 外框 `outer` 在 XY 平面上是否完全包住 `inner`。 */
+/** Whether bounding box `outer` fully encloses `inner` in the XY plane. */
 export function enclosesXY(outer: BoundingBox, inner: BoundingBox): boolean {
   return (
     outer.min.x <= inner.min.x &&
@@ -102,23 +105,23 @@ export function enclosesXY(outer: BoundingBox, inner: BoundingBox): boolean {
   );
 }
 
-/** 一個葉節點最多放幾個三角形。太小會讓樹太深，太大會讓剪枝變粗。 */
+/** Maximum triangles per BVH leaf. Too small makes the tree too deep; too large makes pruning coarse. */
 const LEAF_SIZE = 8;
 
 export class TriangleSet {
   readonly triangles: readonly Triangle[];
-  /** 每個三角形的 AABB，攤平成 6 個 float 一組。typed array 是為了避免上萬個小物件。 */
+  /** Per-triangle AABBs, flattened into groups of 6 floats. A typed array avoids tens of thousands of small objects. */
   readonly #bounds: Float64Array;
   readonly box: BoundingBox;
 
-  /** BVH 節點的 AABB，同樣 6 個 float 一組。 */
+  /** BVH node AABBs, also groups of 6 floats. */
   readonly #nodeBounds: Float64Array;
-  /** 內部節點：右子節點的索引（左子節點永遠是 self + 1）。葉節點為 -1。 */
+  /** Internal nodes: index of the right child (the left child is always self + 1). -1 for leaves. */
   readonly #nodeRight: Int32Array;
-  /** 葉節點在 #order 裡的起點與數量；內部節點為 -1 / 0。 */
+  /** Start and count of a leaf's range in #order; -1 / 0 for internal nodes. */
   readonly #nodeStart: Int32Array;
   readonly #nodeCount: Int32Array;
-  /** 三角形索引的排列，葉節點指向這裡的連續區段。 */
+  /** Permutation of triangle indices; leaves point at contiguous ranges in it. */
   readonly #order: Int32Array;
   readonly #nodeTotal: number;
 
@@ -178,12 +181,14 @@ export class TriangleSet {
     const max = { x: maxX, y: maxY, z: maxZ };
     this.box = { min, max, size: subtract(max, min) };
 
-    // 節點數上界要用「最小」葉大小算，不是最大的。
+    // The upper bound on node count must use the *smallest* leaf size, not the largest.
     //
-    // 直覺會寫 2⌈n/LEAF_SIZE⌉，但那是葉子都塞滿時的數字。中位數切分只在 count > LEAF_SIZE
-    // 時才切，count = 9 會切成 4 和 5 —— 所以最小的葉是 LEAF_SIZE/2 個三角形，
-    // 節點數是那個估計的兩倍。算小了不會報錯：typed array 寫超出範圍是**靜默丟棄**，
-    // 樹會少掉一整片子樹，查詢安靜地漏掉三角形，間隙就量出偏大的假數字。
+    // The intuitive formula is 2⌈n/LEAF_SIZE⌉, but that assumes every leaf is full. Median
+    // splitting only splits when count > LEAF_SIZE, and count = 9 splits into 4 and 5, so the
+    // smallest leaf holds LEAF_SIZE/2 triangles and the node count is twice that estimate.
+    // Underestimating raises no error: out-of-range writes to a typed array are **silently
+    // dropped**, the tree loses an entire subtree, queries quietly miss triangles, and the
+    // measured clearance comes out as a falsely large number.
     const minLeaf = Math.max(1, Math.floor(LEAF_SIZE / 2));
     const maxNodes = Math.max(1, 2 * Math.ceil(Math.max(count, 1) / minLeaf) + 2);
     this.#nodeBounds = new Float64Array(maxNodes * 6);
@@ -197,17 +202,20 @@ export class TriangleSet {
   }
 
   /**
-   * 建樹：以最長軸的中位數切開。
+   * Build the tree: split at the median along the longest axis.
    *
-   * 用中位數（nth_element 式的分割）而不是空間中點，樹才會平衡 ——
-   * 齒輪這種質量集中在圓環上的分佈，用空間中點切會生出一堆空節點。
+   * Splitting at the median (an nth_element-style partition) rather than the spatial midpoint
+   * keeps the tree balanced; for a gear, whose mass is concentrated on a ring, splitting at the
+   * spatial midpoint produces lots of empty nodes.
    */
   #build(start: number, count: number, centroids: Float64Array, cursor: { next: number }): number {
     const self = cursor.next - 1;
-    // 容量算錯的話 typed array 會靜默吃掉寫入，錯誤要到查詢結果才顯現，而且看起來像正確答案。
-    // 寧可在這裡炸掉。
+    // If the capacity is miscalculated, the typed array silently swallows writes, and the error
+    // only surfaces in query results, where it looks like a correct answer. Better to blow up here.
     if (self * 6 + 6 > this.#nodeBounds.length) {
-      throw new Error(`BVH 節點容量不足：需要第 ${self} 個節點，只配置了 ${this.#nodeRight.length} 個。`);
+      throw new Error(
+        `BVH node capacity exceeded: node ${self} is needed but only ${this.#nodeRight.length} were allocated.`,
+      );
     }
     const base = self * 6;
 
@@ -264,7 +272,7 @@ export class TriangleSet {
     return cursor.next;
   }
 
-  /** 節點 AABB 與點 `p` 的距離下界。 */
+  /** Lower bound on the distance between a node's AABB and point `p`. */
   #nodeLowerBound(node: number, p: Vec3): number {
     const base = node * 6;
     const dx = Math.max(0, (this.#nodeBounds[base] ?? 0) - p.x, p.x - (this.#nodeBounds[base + 3] ?? 0));
@@ -273,7 +281,7 @@ export class TriangleSet {
     return Math.sqrt(dx * dx + dy * dy + dz * dz);
   }
 
-  /** 節點 AABB 是否與 `box` 擴張 `radius` 後有交集。 */
+  /** Whether a node's AABB intersects `box` expanded by `radius`. */
   #nodeIntersectsBox(node: number, box: BoundingBox, radius: number): boolean {
     const base = node * 6;
     return (
@@ -287,10 +295,11 @@ export class TriangleSet {
   }
 
   /**
-   * 三角形 index 的 AABB 與 `box` 的最小距離，不配置任何物件。
+   * Minimum distance between triangle `index`'s AABB and `box`, without allocating any objects.
    *
-   * `boundsOf(index)` 每次都要生出 min／max／size 三個物件；在「把所有三角形依遠近比較」
-   * 這種每個三角形都要算一次、而且每組零件比對要算四次的路徑上，那就是幾百萬次配置。
+   * `boundsOf(index)` creates three objects (min/max/size) on every call; on a path like
+   * "rank every triangle by distance", which runs once per triangle and four times per pair of
+   * parts, that adds up to millions of allocations.
    */
   lowerBoundToBox(index: number, box: BoundingBox): number {
     const base = index * 6;
@@ -315,7 +324,7 @@ export class TriangleSet {
     return { min, max, size: subtract(max, min) };
   }
 
-  /** 走訪 AABB 與 `box` 擴張 `radius` 後有交集的三角形。visit 回傳 true 就提早結束。 */
+  /** Visit triangles whose AABB intersects `box` expanded by `radius`. Stops early when visit returns true. */
   forEachNear(box: BoundingBox, radius: number, visit: (index: number) => boolean | void): void {
     if (this.#nodeTotal === 0) return;
     const stack = [0];
@@ -341,21 +350,24 @@ export class TriangleSet {
   }
 
   /**
-   * 找出離 `p` 最近、且距離小於 `limit` 的表面點。找不到就回 undefined。
+   * Find the surface point closest to `p` whose distance is less than `limit`. Returns
+   * undefined if there is none.
    *
-   * `limit` 必須是有限值 —— 傳 Infinity 代表沒有剪枝依據，整棵樹都得走。
-   * 這是這支程式最早的版本跑不完的原因，所以在這裡擋掉而不是靠呼叫端自律。
+   * `limit` must be finite: passing Infinity leaves nothing to prune against, so the whole tree
+   * has to be walked. That is why the earliest version of this code never finished, so it is
+   * rejected here rather than relying on caller discipline.
    */
   nearestWithin(p: Vec3, limit: number): { readonly distance: number; readonly point: Vec3 } | undefined {
     if (!Number.isFinite(limit)) {
-      throw new Error('nearestWithin 需要有限的搜尋上界；傳 Infinity 會讓剪枝失效。');
+      throw new Error('nearestWithin requires a finite search bound; passing Infinity disables pruning.');
     }
     if (this.#nodeTotal === 0) return undefined;
 
     let best = limit;
     let bestPoint: Vec3 | undefined;
 
-    // 明確的堆疊而不是遞迴：這條路徑一次比對會被呼叫上萬次，遞迴的呼叫成本看得出來。
+    // An explicit stack rather than recursion: this path is called tens of thousands of times
+    // per comparison, and the cost of recursive calls is measurable.
     const stack: number[] = [0];
 
     while (stack.length > 0) {
@@ -386,7 +398,8 @@ export class TriangleSet {
         continue;
       }
 
-      // 先走比較近的子節點，best 收斂得快，另一邊往往整枝被剪掉。
+      // Visit the nearer child first: `best` converges quickly and the other branch is often
+      // pruned entirely.
       const left = node + 1;
       const right = this.#nodeRight[node] ?? -1;
       if (right < 0) {

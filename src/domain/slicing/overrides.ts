@@ -3,22 +3,24 @@ import { ownerOf } from '../parameters/catalog.js';
 import { isKnownParameterKey } from '../parameters/known-keys.js';
 
 /**
- * 決定每個覆寫參數要落到哪裡。
+ * Decide where each override parameter lands.
  *
- * 這是純函式，因為它是兩個真實 bug 的發生地：
+ * This is a pure function because it is where two real bugs happened:
  *
- * 1. 未知參數曾被當成 CLI flag 送出去。BambuStudio 遇到不認識的 flag 會讓**整次切片失敗**，
- *    所以一個手滑的參數名會毀掉一次完全正常的切片。現在直接丟棄並警告。
- * 2. 判斷歸屬時若只信 catalog，catalog 沒收錄的參數就會被誤送命令列。
- *    現在先看這個 key 實際存在於哪一份展平後的 preset，catalog 只是後備。
+ * 1. Unknown parameters used to be sent as CLI flags. An unrecognised flag makes BambuStudio
+ *    **fail the whole slice**, so one mistyped parameter name would ruin an otherwise perfectly
+ *    good slice. Now they are dropped with a warning.
+ * 2. When ownership was decided by the catalog alone, parameters the catalog does not list were
+ *    wrongly sent on the command line. Now we first check which flattened preset actually
+ *    contains the key; the catalog is only a fallback.
  */
 
 export type OverrideRouting = {
-  /** 依 preset 種類分好的覆寫，會被寫進展平後的暫存 JSON。 */
+  /** Overrides grouped by preset kind; written into the flattened temporary JSON. */
   readonly buckets: Readonly<Record<PresetKind, ParameterOverrides>>;
-  /** 不屬於任何已載入 preset、但確實是有效參數，改由命令列送出。 */
+  /** Valid parameters that belong to no loaded preset; sent on the command line instead. */
   readonly commandLine: readonly string[];
-  /** 完全無法辨識、已丟棄的參數。 */
+  /** Parameters that could not be recognised at all and were dropped. */
   readonly dropped: readonly string[];
   readonly warnings: readonly string[];
 };
@@ -37,7 +39,7 @@ export function routeOverrides(
   const warnings: string[] = [];
 
   for (const [key, value] of Object.entries(overrides)) {
-    // 先看它實際出現在哪一份 preset —— 這比 catalog 可靠，因為 catalog 只是精選。
+    // First check which preset it actually appears in: more reliable than the catalog, which is only a curated selection.
     const owner =
       (['process', 'filament', 'machine'] as const).find((kind) => key in resolved[kind]) ??
       ownerOf(key);
@@ -50,14 +52,14 @@ export function routeOverrides(
     if (!isKnownParameterKey(key)) {
       dropped.push(key);
       warnings.push(
-        `${key} 不是 BambuStudio 的參數名稱，已略過（未送出）。請確認拼字；` +
-          '把未知參數送給 CLI 會讓整次切片失敗，所以這裡選擇丟棄而不是嘗試。',
+        `${key} is not a BambuStudio parameter name; skipped (not sent). Check the spelling. ` +
+          'Sending an unknown parameter to the CLI makes the whole slice fail, so it is dropped here rather than tried.',
       );
       continue;
     }
 
     warnings.push(
-      `${key} 不屬於任何已載入的 preset，改以命令列覆寫；切片後請看 overrideAudit 確認有沒有生效。`,
+      `${key} does not belong to any loaded preset, so it is overridden on the command line; check overrideAudit after slicing to confirm it was honoured.`,
     );
     commandLine.push(`--${key.replaceAll('_', '-')}=${serialise(value)}`);
   }
@@ -66,8 +68,8 @@ export function routeOverrides(
 }
 
 /**
- * 多噴頭參數是每個 extruder 一項的陣列，命令列以逗號串接。
- * `Array.isArray` 不會窄化 `readonly string[]`，所以用明確的型別判斷。
+ * Multi-nozzle parameters are arrays with one item per extruder, joined with commas on the
+ * command line. `Array.isArray` does not narrow `readonly string[]`, so use an explicit type check.
  */
 function serialise(value: PresetValue): string {
   return typeof value === 'string' ? value : value.join(',');

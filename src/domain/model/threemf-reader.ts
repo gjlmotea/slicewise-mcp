@@ -3,15 +3,17 @@ import { readZipDirectory, readZipEntry } from '../slicing/zip.js';
 import type { Triangle } from './stl.js';
 
 /**
- * 從 3MF 讀出實際幾何。
+ * Reads the actual geometry out of a 3MF.
  *
- * `threemf.ts` 負責「寫」，這一支負責「讀」。分開是因為兩邊的難處不同：
- * 寫的時候結構由我們決定，讀的時候要面對別人產生的檔案 —— 尤其是 Bambu／MakerWorld
- * 那種把網格拆進 `3D/Objects/*.model`、再用 production extension 的 `p:path` 從根檔案
- * 引用回來的形式。只讀根檔案會什麼都拿不到。
+ * `threemf.ts` does the writing; this module does the reading. They are separate because the
+ * hard parts differ: when writing, we decide the structure; when reading, we face files other
+ * tools produced — especially the Bambu/MakerWorld style that splits meshes into
+ * `3D/Objects/*.model` and references them back from the root file through the production
+ * extension's `p:path`. Reading only the root file gets you nothing.
  *
- * 座標一律解算到「擺在列印板上的位置」：component 的 transform 與 build item 的 transform
- * 都會套用。這樣量出來的數字跟使用者在 Studio 裡看到的是同一套。
+ * Coordinates are always resolved to "where it sits on the plate": both component transforms
+ * and build item transforms are applied. That way the numbers we measure are in the same frame
+ * the user sees in Studio.
  */
 
 export class ThreeMfReadError extends Error {
@@ -21,28 +23,29 @@ export class ThreeMfReadError extends Error {
   }
 }
 
-/** 3MF 的一個零件：一組已經解算到世界座標的三角形。 */
+/** One part of a 3MF: a set of triangles already resolved to world coordinates. */
 export type MeshPart = {
-  /** 顯示名稱。取自 model_settings.config，沒有就用 object id 兜。 */
+  /** Display name. Taken from model_settings.config; falls back to one built from the object id. */
   readonly name: string;
-  /** 這個零件在 3MF 裡的 part id（來自 model_settings.config 的順序）。 */
+  /** This part's part id within the 3MF (from the order in model_settings.config). */
   readonly partId: string;
-  /** 指派的擠出頭編號；沒有多色資訊時為 undefined。 */
+  /** Assigned extruder number; undefined when there is no multi-colour information. */
   readonly extruder: string | undefined;
   /**
-   * Bambu 的零件類型（normal_part／negative_part／modifier_part／support_blocker／support_enforcer）。
-   * 沒宣告時是 undefined，等同 normal_part。只有 normal_part 是會印出來的實體。
+   * Bambu part type (normal_part / negative_part / modifier_part / support_blocker / support_enforcer).
+   * Undefined when not declared, which means normal_part. Only normal_part is a solid that gets printed.
    */
   readonly subtype?: string;
-  /** OBJ 的 usemtl 材質名稱；Bambu 匯入 OBJ 時依材質分配耗材槽。 */
+  /** OBJ usemtl material name; Bambu assigns filament slots by material when importing an OBJ. */
   readonly material?: string;
   readonly triangles: readonly Triangle[];
 };
 
 /**
- * 3MF 的 transform 是 12 個數字，列主序的 4×3。
- * 套用方式是列向量右乘：`p' = p · M + t`，其中 t 是最後三個數。
- * 寫錯成行向量的話平移會跑到別的軸上，而且不會報錯 —— 只會安靜地量出錯誤的距離。
+ * A 3MF transform is 12 numbers, a row-major 4×3.
+ * It is applied as a row vector multiplied on the right: `p' = p · M + t`, where t is the last three numbers.
+ * Getting it wrong as a column vector moves the translation onto other axes without any error —
+ * it just quietly measures the wrong distances.
  */
 type Transform = readonly number[];
 
@@ -63,7 +66,7 @@ function applyTransform(v: Vec3, m: Transform): Vec3 {
   };
 }
 
-/** 兩個 transform 相乘：先套 inner，再套 outer。 */
+/** Multiplies two transforms: inner is applied first, then outer. */
 function composeTransform(outer: Transform, inner: Transform): Transform {
   const out: number[] = [];
   for (let row = 0; row < 3; row += 1) {
@@ -80,11 +83,12 @@ function composeTransform(outer: Transform, inner: Transform): Transform {
   return out;
 }
 
-// ── XML 掃描 ───────────────────────────────────────────────────────────────
+// ── XML scanning ──────────────────────────────────────────────────────────
 //
-// 這裡刻意不引入 XML 解析套件。3MF 的 model 檔可以到數 MB，通用解析器會把整棵 DOM
-// 建起來，記憶體與時間都不划算；而我們只需要四種標籤。掃描器只認標籤名與屬性，
-// 不處理 CDATA 與註解 —— 3MF 的 model 檔規格上不會出現這兩者。
+// No XML parsing package on purpose. A 3MF model file can be several MB; a general-purpose
+// parser builds the whole DOM, which costs memory and time we don't need to spend, and we only
+// need four kinds of tags. The scanner understands only tag names and attributes and does not
+// handle CDATA or comments — by spec, neither appears in a 3MF model file.
 
 function attributes(tag: string): Record<string, string> {
   const result: Record<string, string> = {};
@@ -99,7 +103,7 @@ function attributes(tag: string): Record<string, string> {
   return result;
 }
 
-/** 取出 `<object ...>` 到對應 `</object>`（或自閉合）的區段。 */
+/** The span from `<object ...>` to its matching `</object>` (or a self-closing tag). */
 type ObjectBlock = {
   readonly id: string;
   readonly attrs: Record<string, string>;
@@ -120,7 +124,7 @@ function scanObjects(xml: string): readonly ObjectBlock[] {
     let body = '';
     if (!selfClosing) {
       const close = xml.indexOf('</object>', open.lastIndex);
-      // 3MF 的 resources 是扁平的，object 不會巢狀，所以下一個 </object> 就是自己的。
+      // 3MF resources are flat and objects never nest, so the next </object> is this one's.
       body = close === -1 ? '' : xml.slice(open.lastIndex, close);
       if (close !== -1) open.lastIndex = close + '</object>'.length;
     }
@@ -175,7 +179,7 @@ function parseMesh(body: string): RawMesh | undefined {
 
 type ComponentRef = {
   readonly objectId: string;
-  /** production extension 的 p:path；同檔引用時為 undefined。 */
+  /** The production extension's p:path; undefined for a reference within the same file. */
   readonly path: string | undefined;
   readonly transform: Transform;
 };
@@ -208,10 +212,11 @@ type PartMetadata = {
 };
 
 /**
- * 讀出每個 part 的名稱與擠出頭。
+ * Reads each part's name and extruder.
  *
- * Bambu 把「同一顆實體依高度切成多段換色」也存成獨立的 part，所以這裡拿到的 part
- * 數量往往遠多於機構上的零件數。分辨機構零件是 `clearance.ts` 的工作，不是這裡的。
+ * Bambu also stores "one solid split into height bands for colour changes" as separate parts,
+ * so the number of parts seen here is often far larger than the number of mechanical parts.
+ * Telling mechanical parts apart is `clearance.ts`'s job, not this module's.
  */
 function readPartMetadata(xml: string): readonly PartMetadata[] {
   const parts: PartMetadata[] = [];
@@ -241,11 +246,11 @@ function readPartMetadata(xml: string): readonly PartMetadata[] {
   return parts;
 }
 
-// ── 主流程 ────────────────────────────────────────────────────────────────
+// ── Main flow ─────────────────────────────────────────────────────────────
 
 const ROOT_MODEL = '3D/3dmodel.model';
 
-/** ZIP 的本地檔頭魔數。3MF 就是一個 ZIP。 */
+/** ZIP local file header magic. A 3MF is a ZIP. */
 export function looksLikeZip(buffer: Buffer): boolean {
   return buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b;
 }
@@ -255,7 +260,7 @@ function readModelPart(archive: Buffer, path: string): string | undefined {
   const direct = readZipEntry(archive, normalised);
   if (direct !== undefined) return direct.toString('utf8');
 
-  // 有些產生器把路徑大小寫寫得跟目錄項不一致，退而求其次用不分大小寫比對。
+  // Some producers write the path with different casing from the directory entry; fall back to a case-insensitive match.
   const entry = readZipDirectory(archive).find(
     (candidate) => candidate.name.toLowerCase() === normalised.toLowerCase(),
   );
@@ -271,7 +276,7 @@ function loadDocument(archive: Buffer, path: string, cache: Map<string, ModelDoc
 
   const xml = readModelPart(archive, key);
   if (xml === undefined) {
-    throw new ThreeMfReadError(`3MF 內找不到 ${key}`);
+    throw new ThreeMfReadError(`${key} not found inside the 3MF`);
   }
 
   const objects = new Map<string, ObjectBlock>();
@@ -283,9 +288,10 @@ function loadDocument(archive: Buffer, path: string, cache: Map<string, ModelDoc
 }
 
 /**
- * 把一個 object 展開成三角形，遞迴解析 components。
+ * Expands one object into triangles, resolving components recursively.
  *
- * `seen` 擋住互相引用造成的無限遞迴 —— 規格上不允許，但別人產生的檔案不一定守規矩。
+ * `seen` stops infinite recursion from mutual references — the spec forbids them, but files
+ * produced by other tools don't always follow the rules.
  */
 function flatten(
   archive: Buffer,
@@ -333,16 +339,16 @@ function flatten(
 }
 
 /**
- * 讀出 3MF 裡所有零件的幾何。
+ * Reads the geometry of every part in a 3MF.
  *
- * 回傳的每個 MeshPart 對應 3MF 結構上的一個零件（component 或獨立 object），
- * 座標已經套用 build item 的擺放 transform。
+ * Each returned MeshPart corresponds to one structural part of the 3MF (a component or a
+ * standalone object), with the build item's placement transform already applied.
  */
 export function readThreeMfParts(archive: Buffer): readonly MeshPart[] {
   const cache = new Map<string, ModelDocument>();
   const rootXml = readModelPart(archive, ROOT_MODEL);
   if (rootXml === undefined) {
-    throw new ThreeMfReadError(`3MF 內找不到 ${ROOT_MODEL}；檔案可能不是 3MF 或已損毀`);
+    throw new ThreeMfReadError(`${ROOT_MODEL} not found inside the 3MF; the file may not be a 3MF or may be corrupted`);
   }
 
   const settingsXml = readZipEntry(archive, 'Metadata/model_settings.config')?.toString('utf8');
@@ -367,7 +373,7 @@ export function readThreeMfParts(archive: Buffer): readonly MeshPart[] {
     index += 1;
   };
 
-  // build 裡的 item 才是「真的要印的東西」。resources 裡可能有沒被引用的 object。
+  // Items in <build> are "what actually gets printed". <resources> may hold objects nothing references.
   const itemPattern = /<item\b([^>]*)>/g;
   let match = itemPattern.exec(rootXml);
   let items = 0;
@@ -383,14 +389,14 @@ export function readThreeMfParts(archive: Buffer): readonly MeshPart[] {
   }
 
   if (items === 0) {
-    // 沒有 build item 的 3MF 少見但合法（例如只當幾何容器用）。退回把所有 object 都展開。
+    // A 3MF with no build items is rare but legal (e.g. used purely as a geometry container). Fall back to expanding every object.
     for (const id of rootObjects.keys()) {
       flatten(archive, ROOT_MODEL, id, IDENTITY, cache, new Set(), emit);
     }
   }
 
   if (parts.length === 0) {
-    throw new ThreeMfReadError('3MF 解析成功但沒有任何三角形；檔案可能只有設定沒有幾何');
+    throw new ThreeMfReadError('The 3MF parsed but contains no triangles; the file may hold settings only and no geometry');
   }
 
   return parts;

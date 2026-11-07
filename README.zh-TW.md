@@ -6,7 +6,7 @@
 
 `@gjlmotea/slicewise-mcp`｜stdio transport｜16 個工具｜不連印表機
 
-> 非官方專案，與 Bambu Lab 無關聯，也未經其認可或贊助。工具說明與回傳訊息目前是繁體中文。
+> 非官方專案，與 Bambu Lab 無關聯，也未經其認可或贊助。工具說明與回傳訊息是英文，MCP 用戶端的模型會用你的語言轉述；`bambu_diagnose` 與 `bambu_plan_settings` 照樣認得中文寫的現象與目標（翹邊、省時……）。
 
 ---
 

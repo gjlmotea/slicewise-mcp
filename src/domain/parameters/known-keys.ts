@@ -1,17 +1,19 @@
 /**
- * BambuStudio 展平後的完整設定 key 空間。
+ * The complete setting key space of BambuStudio after flattening.
  *
- * 來源：以 Bambu Lab X1 Carbon 0.4 nozzle ／ 0.20mm Standard @BBL X1C ／ Bambu PLA Basic
- * 展平後實跑一次切片，從產物 3MF 的 `Metadata/project_settings.config` 取出。
- * 對應 BambuStudio 02.07.01.62、vendor profile 02.07.00.08。
+ * Source: flattened Bambu Lab X1 Carbon 0.4 nozzle / 0.20mm Standard @BBL X1C / Bambu PLA Basic,
+ * sliced once for real, with the keys taken from `Metadata/project_settings.config` in the output 3MF.
+ * Corresponds to BambuStudio 02.07.01.62, vendor profile 02.07.00.08.
  *
- * 用途是**打錯字偵測**：覆寫一個不存在的 key 時，BambuStudio 會靜默忽略，
- * 使用者以為改了其實沒改。有了這份清單就能在切片前就講清楚。
+ * Its purpose is **typo detection**: when you override a key that does not exist, BambuStudio
+ * silently ignores it, and the user thinks it was changed when it was not. With this list the
+ * problem can be stated before slicing.
  *
- * 這不是「所有機種的所有 key」——多噴頭與其他機型可能有額外 key，
- * 所以 `isKnownParameterKey` 為 false 只代表「不在這份基準內」，是警告而不是錯誤。
+ * This is not "every key of every printer model" — multi-nozzle setups and other models may have
+ * extra keys, so `isKnownParameterKey` returning false only means "not in this baseline"; it is a
+ * warning, not an error.
  *
- * 本檔為產生物，勿手改；更新方式見 README「更新 key 基準」。
+ * This file is generated; do not edit it by hand. See "Updating the key baseline" in the README.
  */
 
 export const KNOWN_PARAMETER_KEYS: ReadonlySet<string> = new Set([
@@ -585,12 +587,12 @@ export const KNOWN_PARAMETER_KEYS: ReadonlySet<string> = new Set([
   "z_hop_types",
 ]);
 
-/** 這個 key 是否存在於基準 key 空間。 */
+/** Whether this key exists in the baseline key space. */
 export function isKnownParameterKey(key: string): boolean {
   return KNOWN_PARAMETER_KEYS.has(key);
 }
 
-/** 一次檢查多個 key，回傳不在基準內的那些。 */
+/** Checks several keys at once and returns those not in the baseline. */
 export function unknownParameterKeys(keys: readonly string[]): readonly string[] {
   return keys.filter((key) => !KNOWN_PARAMETER_KEYS.has(key));
 }
