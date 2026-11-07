@@ -79,7 +79,7 @@ export type BambuServiceDependencies = {
   /**
    * 允許讀取模型檔的根目錄。
    *
-   * `vibe/mcp` 架構原則第 4 條：不把任意檔案路徑暴露給 MCP Client。
+   * 原則：不把任意檔案路徑暴露給 MCP Client。
    * 空陣列代表未設定，所有讀檔工具一律拒絕。
    */
   readonly allowedModelRoots: readonly string[];

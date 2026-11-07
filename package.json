@@ -1,29 +1,64 @@
 {
-  "name": "@vibe/bambu-mcp",
+  "name": "@gjlmotea/slicewise-mcp",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
-  "description": "Bambu Studio companion MCP：展平 preset 繼承鏈以修正 CLI 切片失真，並提供參數知識層、切片、模型可列印性與模型搜尋工具面。",
-  "license": "UNLICENSED",
+  "description": "Slicewise: pre-print decision and audit MCP server for Bambu Studio. Flattens preset inheritance so CLI slicing matches the GUI, audits which overrides took effect, checks STL/3MF/OBJ printability (including floating parts), plans settings from goals and edits 3MF parts non-destructively. Does not control printers.",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "bambu-studio",
+    "bambu-lab",
+    "bambulab",
+    "3d-printing",
+    "slicer",
+    "slicing",
+    "gcode",
+    "3mf",
+    "stl",
+    "obj",
+    "printability",
+    "print-settings",
+    "preset",
+    "claude-code",
+    "codex",
+    "ai-agent"
+  ],
+  "license": "MIT",
+  "author": "gjlmotea",
+  "homepage": "https://github.com/gjlmotea/slicewise-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gjlmotea/slicewise-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/gjlmotea/slicewise-mcp/issues"
+  },
+  "mcpName": "io.github.gjlmotea/slicewise-for-bambu-studio-mcp",
   "engines": {
-    "node": "24.22.2"
+    "node": ">=22"
   },
   "packageManager": "pnpm@11.17.0",
   "main": "./dist/index.js",
   "bin": {
-    "bambu-mcp": "./dist/index.js"
+    "slicewise-mcp": "./dist/index.js"
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "README.zh-TW.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "build": "tsc -p tsconfig.build.json",
     "smoke": "node scripts/stdio-smoke.mjs",
     "verify": "pnpm run typecheck && pnpm run test && pnpm run build && pnpm run smoke",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "prepack": "pnpm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",

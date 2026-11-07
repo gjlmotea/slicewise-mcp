@@ -1,7 +1,7 @@
 /**
  * 模型平台目錄。
  *
- * `gjlmotea/vibe/mcp` 的架構原則第 5 條：不把瀏覽器自動化冒充 API。
+ * 原則：不把瀏覽器自動化冒充 API。
  * 沒有官方公開介面的平台，狀態就是 `handoff-only`，我們只產生查詢連結交給人，
  * 不用登入 cookie、私有 endpoint 或畫面 selector 假裝自己有 API。
  */

@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { BambuService } from '../application/bambu-service.js';
 import { registerTools } from './register-tools.js';
 
-export const SERVER_NAME = 'bambu-mcp';
+export const SERVER_NAME = 'slicewise-mcp';
 
 export function createMcpServer(options: {
   readonly service: BambuService;

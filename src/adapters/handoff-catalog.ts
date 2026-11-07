@@ -9,7 +9,7 @@ import type { ModelCatalog, ModelSearchResult } from '../ports/model-catalog.js'
  *   它的搜尋端點對非瀏覽器來源回傳空結果，繞過去需要偽造 session state。
  * - **Printables**：有 GraphQL 端點但沒有官方開發者方案，隨時可能改動或封鎖。
  *
- * `gjlmotea/vibe/mcp` 架構原則第 5 條明訂「不把瀏覽器自動化冒充 API」：
+ * 本專案的原則是「不把瀏覽器自動化冒充 API」：
  * 官方沒有支援的整合介面時，狀態就是 unsupported，不用登入 cookie、
  * 私有 endpoint 或畫面 selector 繞過。所以這裡只回傳連結。
  */

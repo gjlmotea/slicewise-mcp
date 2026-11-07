@@ -115,7 +115,7 @@ export function buildBambuProject(options: ProjectOptions): Buffer {
   }
 
   const centre = options.plateCentre ?? { x: 128, y: 128 };
-  const application = options.application ?? 'bambu-mcp';
+  const application = options.application ?? 'slicewise-mcp';
 
   const objectsModel = renderObjectsModel(parts);
   const rootModel = renderRootModel(parts, centre, application);

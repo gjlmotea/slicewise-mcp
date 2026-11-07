@@ -1,0 +1,61 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.gjlmotea/slicewise-for-bambu-studio-mcp",
+  "title": "Slicewise",
+  "description": "Pre-print checks for Bambu Studio: GUI-faithful CLI slicing, override audit, printability.",
+  "websiteUrl": "https://github.com/gjlmotea/slicewise-mcp",
+  "repository": {
+    "url": "https://github.com/gjlmotea/slicewise-mcp",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@gjlmotea/slicewise-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "BAMBU_MODEL_DIR",
+          "description": "Folders the model tools may read from, joined with the platform path delimiter (':' on macOS and Linux, ';' on Windows). Model reads are refused when unset",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "BAMBU_OUTPUT_DIR",
+          "description": "Folder for sliced and composed 3MF output; also readable by the model tools. Writing tools are refused when unset",
+          "isRequired": false,
+          "format": "filepath"
+        },
+        {
+          "name": "BAMBU_STUDIO_PATH",
+          "description": "Bambu Studio executable; resolved from the default install location when unset",
+          "isRequired": false,
+          "format": "filepath"
+        },
+        {
+          "name": "BAMBU_DATA_DIR",
+          "description": "Bambu Studio data folder holding system and user presets; resolved per platform when unset",
+          "isRequired": false,
+          "format": "filepath"
+        },
+        {
+          "name": "BAMBU_SLICE_TIMEOUT_MS",
+          "description": "Slicing timeout in milliseconds",
+          "isRequired": false,
+          "format": "number"
+        },
+        {
+          "name": "THINGIVERSE_TOKEN",
+          "description": "Thingiverse app token; only the Thingiverse part of model search needs it",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}
