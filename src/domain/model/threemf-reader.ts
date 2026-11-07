@@ -29,6 +29,13 @@ export type MeshPart = {
   readonly partId: string;
   /** 指派的擠出頭編號；沒有多色資訊時為 undefined。 */
   readonly extruder: string | undefined;
+  /**
+   * Bambu 的零件類型（normal_part／negative_part／modifier_part／support_blocker／support_enforcer）。
+   * 沒宣告時是 undefined，等同 normal_part。只有 normal_part 是會印出來的實體。
+   */
+  readonly subtype?: string;
+  /** OBJ 的 usemtl 材質名稱；Bambu 匯入 OBJ 時依材質分配耗材槽。 */
+  readonly material?: string;
   readonly triangles: readonly Triangle[];
 };
 
@@ -194,7 +201,11 @@ function parseComponents(body: string): readonly ComponentRef[] {
 
 // ── model_settings.config ─────────────────────────────────────────────────
 
-type PartMetadata = { readonly name: string | undefined; readonly extruder: string | undefined };
+type PartMetadata = {
+  readonly name: string | undefined;
+  readonly extruder: string | undefined;
+  readonly subtype: string | undefined;
+};
 
 /**
  * 讀出每個 part 的名稱與擠出頭。
@@ -222,7 +233,7 @@ function readPartMetadata(xml: string): readonly PartMetadata[] {
       metaMatch = meta.exec(body);
     }
 
-    parts.push({ name, extruder });
+    parts.push({ name, extruder, subtype: attributes(match[1] ?? '')['subtype'] });
     if (close !== -1) pattern.lastIndex = close + '</part>'.length;
     match = pattern.exec(xml);
   }
@@ -350,6 +361,7 @@ export function readThreeMfParts(archive: Buffer): readonly MeshPart[] {
       name: meta?.name ?? `part_${index + 1}`,
       partId: String(index + 1),
       extruder: meta?.extruder,
+      ...(meta?.subtype === undefined ? {} : { subtype: meta.subtype }),
       triangles,
     });
     index += 1;

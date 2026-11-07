@@ -129,8 +129,8 @@ return ModelVolumeType::MODEL_PART;
 
 | 工具 | 用途 |
 |---|---|
-| `bambu_inspect_model` | STL／3MF 幾何：三角形數、外框、體積、表面積、網格是否封閉、零件清單 |
-| `bambu_check_printability` | 超範圍、非流形、陡峭懸空、底面積過小、高寬比、薄特徵、翹曲風險 |
+| `bambu_inspect_model` | STL／3MF／OBJ 幾何：三角形數、外框、體積、表面積、網格是否封閉、零件清單 |
+| `bambu_check_printability` | 超範圍、**沒接到列印板的浮空實體**、非流形、陡峭懸空、底面積過小、高寬比、薄特徵、翹曲風險 |
 | `bambu_measure_clearance` | **零件之間的最小間隙**：列印即組裝的機構印完會不會黏死，附補償建議 |
 | `bambu_compose_model` | 組出含挖除體／修飾體／支撐控制的 Bambu 專案 3MF |
 | `bambu_inspect_project` | 讀回 3MF 的物件與零件結構，驗證寫進去的東西真的在裡面 |
@@ -146,6 +146,20 @@ return ModelVolumeType::MODEL_PART;
 `bambu_get_status` —— 資料目錄、切片器是否可用、preset 數量、Studio 目前選用的機器與材料、允許的模型目錄、各平台整合層級。
 
 ---
+
+
+### 浮空實體偵測
+
+2026-11-07 實際踩到：Tinkercad 用方塊拼的生日蛋糕插牌，兩隻腳頂在 z=50、身體底從 z=51 開始。Bambu Studio 報「Levitating objects cannot be printed without supports」，但**只開支撐是錯的修法** —— 支撐會填進那條 1 mm 的縫，拆掉後腳和身體斷成兩截。整體外框與懸空角都看不出這件事（最低點確實在板上、每個面角度正常），要看的是連通性。
+
+`bambu_check_printability` 的 `floating-part` 檢查：
+
+1. 依共用頂點把幾何拆成殼（STL 沒有零件邊界也行）；挖除體、修飾體、支撐控制體不算實體。
+2. 表面貼合或互相穿透的殼併成實體（與 `bambu_measure_clearance` 同一套接觸判準）。
+3. 整個包在別的殼裡的實體併進去 —— 射線奇偶測試**逐殼**做：一塊實體常是好幾個互相穿透的封閉殼，整塊一起數交點時，點落在兩個殼的交集裡會得到奇＋奇＝偶而誤判在外面。
+4. 碰不到板子的實體回報離板高度、它該接上去的實體（優先找站在板上的）與縫寬。縫在 2 mm 內提示「多半是建模沒接上」（若是就別開支撐，回建模軟體補），但這只是經驗門檻：刻意留的活動間隙（籠中球、關節）也會落在這裡，報告會要求先確認設計意圖；更寬的是懸空、要支撐。
+
+同一個模型上它也抓到了 Studio 只籠統報成「floating regions」的兩處：字母 H 懸在板面上 0.247 mm，以及 i 的那一點離本體 2.5 mm（後者是設計上本來就懸空，要靠支撐）。
 
 ## 設定
 
@@ -213,7 +227,7 @@ ENV-001「不寫死使用者絕對路徑」的原意是可攜性，但一份起�
 - **不把瀏覽器自動化冒充 API。** MakerWorld 與 Printables 沒有官方公開介面，就只回查詢連結，不用 cookie、私有 endpoint 或畫面 selector 繞過。這是 `vibe/mcp` 架構原則第 5 條。
 - **不猜症狀。** `bambu_diagnose` 比對不到已知症狀時直接說沒把握並附上可選清單，因為猜錯會給出讓情況更糟的建議。
 - **不做破壞性幾何運算。** `bambu_compose_model` 產生的是「本體 + 標記過的附加零件」，boolean 由切片器在切片時處理。真正要算出新網格（合併後的 mesh、切割結果、文字浮雕）不在範圍內 —— 那需要幾何運算引擎，該交給 Blender 或 OpenSCAD。
-- **間隙量測只吃 3MF。** STL 是一鍋沒有分組的三角形，沒有零件邊界可分，`bambu_measure_clearance` 會直說量不了而不是回一份空報告。判定「同一顆實體」的依據是表面接觸或互相穿透；完全被另一個零件包住、但中間隔著空隙的結構（例如封閉腔室裡的自由滾珠）會被算成兩顆獨立實體，那在幾何上也確實是兩顆。
+- **間隙量測只吃 3MF 與 OBJ。** STL 是一鍋沒有分組的三角形，沒有零件邊界可分，`bambu_measure_clearance` 會直說量不了而不是回一份空報告。判定「同一顆實體」的依據是表面接觸或互相穿透；完全被另一個零件包住、但中間隔著空隙的結構（例如封閉腔室裡的自由滾珠）會被算成兩顆獨立實體，那在幾何上也確實是兩顆。
 - **不就地修改既有 3MF 專案。** `bambu_compose_model` 的本體來源是 STL，產出是全新的 3MF。要在既有 Bambu 專案上加零件（同時保留它的塗刷支撐、多盤配置、色彩等狀態）沒有實作；`bambu_inspect_project` 可以讀任何 Bambu 專案 3MF 的零件結構，但不會寫回去。
 
 ---
@@ -224,7 +238,7 @@ ENV-001「不寫死使用者絕對路徑」的原意是可攜性，但一份起�
 pnpm verify
 ```
 
-`typecheck` → `test`（208 項）→ `build` → `smoke`。smoke 用 `tests/fixtures/datadir` 的假資料目錄，沒裝 Bambu Studio 的機器（含 CI）也能跑。
+`typecheck` → `test`（226 項）→ `build` → `smoke`。smoke 用 `tests/fixtures/datadir` 的假資料目錄，沒裝 Bambu Studio 的機器（含 CI）也能跑。
 
 ### 端到端驗證
 
@@ -362,14 +376,14 @@ src/
     presets/     繼承展平與機型 G-code 模板（本 server 的核心）
     parameters/  參數知識層、症狀診斷、key 基準
     slicing/     覆寫路由、耗材顏色交接、G-code 統計、ZIP 讀寫
-    model/       STL 解析、可列印性分析、原始形狀、3MF 組裝與讀回
+    model/       STL／OBJ 解析、可列印性與浮空偵測、原始形狀、3MF 組裝與讀回
   ports/         PresetStore、Slicer、ModelCatalog
   adapters/      BambuStudio CLI、Node preset store、Thingiverse、交接目錄
   application/   BambuService
   server/        工具註冊與 schema
 ```
 
-3MF 是 ZIP 容器，ZIP 讀寫器、STL 解析與 3MF 組裝都手寫，runtime 依賴只有 MCP SDK 與 zod。
+3MF 是 ZIP 容器，ZIP 讀寫器、STL／OBJ 解析與 3MF 組裝都手寫，runtime 依賴只有 MCP SDK 與 zod。
 
 ## 相關
 

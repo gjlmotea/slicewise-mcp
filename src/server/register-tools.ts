@@ -610,8 +610,9 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
     {
       title: '檢查模型幾何',
       description:
-        '解析 STL（binary 或 ASCII）或 3MF，回報三角形數、外框尺寸、體積、表面積與網格是否封閉。' +
-        '格式依檔案內容判斷，不看副檔名。3MF 會一併回報零件數與零件清單（座標已套用擺放 transform）。' +
+        '解析 STL（binary 或 ASCII）、3MF 或 OBJ，回報三角形數、外框尺寸、體積、表面積與網格是否封閉。' +
+        '格式依檔案內容判斷，不看副檔名。3MF 與 OBJ 會一併回報零件數與零件清單' +
+        '（3MF 座標已套用擺放 transform；OBJ 依 o／g 分零件，Tinkercad 的彩色匯出就是 OBJ）。' +
         '只讀允許目錄內的檔案。無副作用。',
       inputSchema: inspectModelInputSchema,
       outputSchema: inspectModelOutputSchema,
@@ -654,8 +655,11 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
     {
       title: '列印可行性檢查',
       description:
-        '切片前先看得出來的問題：超出列印範圍、網格未封閉、陡峭懸空佔比、底面積過小、' +
+        '切片前先看得出來的問題：超出列印範圍、沒接到列印板的浮空實體、網格未封閉、陡峭懸空佔比、底面積過小、' +
         '高寬比過大、特徵過薄、大面積底面的翹曲風險。每一項都附上相關參數。' +
+        '浮空偵測會拆殼、把接觸或穿透的殼併成實體、把整個包在別的實體裡的殼併進去，再看每塊碰不碰得到板子，' +
+        '並量出與最近實體的縫寬：窄縫是建模沒接上（開支撐會讓它印完分家），寬縫才是真的要支撐。' +
+        '吃 STL、3MF 與 OBJ。' +
         '這是幾何分析不是切片模擬，模型內部的薄壁必須實際切片才看得到。無副作用。',
       inputSchema: checkPrintabilityInputSchema,
       outputSchema: checkPrintabilityOutputSchema,
@@ -696,6 +700,7 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
             buildVolume: { x: 0, y: 0, z: 0 },
             fitsBuildVolume: false,
             overhangAreaRatio: 0,
+            floatingBodies: [],
             findings: [],
           },
           message(error),
@@ -709,7 +714,7 @@ export function registerTools(server: McpServer, { service }: ToolDependencies):
     {
       title: '量測零件之間的間隙',
       description:
-        '量出 3MF 裡各零件之間的最小間隙，判斷列印即組裝（print-in-place）的機構印完會不會黏死。' +
+        '量出 3MF 或 OBJ 裡各零件之間的最小間隙，判斷列印即組裝（print-in-place）的機構印完會不會黏死。' +
         '會先把互相接觸的零件併成剛體再比對 —— Bambu 把「同一顆實體的換色段落」也存成獨立零件，' +
         '不併就會把同一塊東西報成「間隙 0」。間隙不足時會給出補償建議，並區分外輪廓與孔洞' +
         '（被包住的那一側在切片器眼中是孔，吃的是不同的參數）。STL 沒有零件邊界，量不了。無副作用。',

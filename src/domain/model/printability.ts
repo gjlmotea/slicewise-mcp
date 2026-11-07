@@ -1,5 +1,7 @@
 import type { PrintabilityFinding, PrintabilityReport, Vec3 } from '../contracts.js';
+import { findFloatingBodies, type FloatingBody } from './floating.js';
 import { boundingBox, faceNormal, inspectModel, triangleArea, type Triangle } from './stl.js';
+import type { MeshPart } from './threemf-reader.js';
 
 /**
  * 可列印性分析。
@@ -29,9 +31,20 @@ export const DEFAULT_PRINTABILITY_OPTIONS: PrintabilityOptions = {
   lineWidthMm: 0.42,
 };
 
+/**
+ * 小於這個寬度的縫，幾乎可以確定是建模時沒接上，而不是刻意懸空的設計。
+ * Tinkercad 拼方塊時對齊格點吸附差一格（1 mm）就是這個量級。
+ */
+const SEAM_GAP_MM = 2;
+
+/**
+ * @param parts 檔案本身的零件邊界（3MF／OBJ）。不給就把整包三角形當一個零件，
+ *   浮空偵測會再依共用頂點拆殼，所以 STL 一樣抓得到。
+ */
 export function analysePrintability(
   triangles: readonly Triangle[],
   options: PrintabilityOptions = DEFAULT_PRINTABILITY_OPTIONS,
+  parts?: readonly MeshPart[],
 ): PrintabilityReport {
   const inspection = inspectModel(triangles);
   const box = boundingBox(triangles);
@@ -79,6 +92,14 @@ export function analysePrintability(
       detail: '多半是匯出時的殘留，通常無害，但會讓網格修復工具誤報。',
       relatedParameters: [],
     });
+  }
+
+  const floatingReport = findFloatingBodies(
+    parts ?? [{ name: 'model', partId: '1', extruder: undefined, triangles }],
+  );
+  const floating = floatingReport.floating;
+  if (floating.length > 0) {
+    findings.push(floatingFinding(floating));
   }
 
   const overhang = measureOverhang(triangles, options.overhangThresholdDegrees, box.min.z);
@@ -155,7 +176,54 @@ export function analysePrintability(
     buildVolume: options.buildVolume,
     fitsBuildVolume,
     overhangAreaRatio: overhang.ratio,
+    floatingBodies: floating.map((body) => ({
+      name: body.name,
+      partNames: body.partNames,
+      liftMm: body.liftMm,
+      nearestBody: body.nearestBody,
+      gapMm: body.gapMm,
+      gapAt: body.gapAt,
+    })),
     findings: findings.sort((a, b) => severityRank(a.severity) - severityRank(b.severity)),
+  };
+}
+
+function floatingFinding(floating: readonly FloatingBody[]): PrintabilityFinding {
+  const seams = floating.filter((body) => body.gapMm !== undefined && body.gapMm <= SEAM_GAP_MM);
+  const allSeams = seams.length === floating.length;
+  const narrowest = Math.min(...floating.map((body) => body.gapMm ?? Infinity));
+
+  const lines = floating.map((body) => {
+    const where =
+      body.gapMm === undefined || body.nearestBody === undefined
+        ? '附近沒有其他實體'
+        : `和「${body.nearestBody}」之間有 ${body.gapMm.toFixed(3)} mm 的縫`;
+    return `「${body.name}」最低點離板 ${body.liftMm.toFixed(2)} mm，${where}`;
+  });
+
+  const advice = allSeams
+    ? `這些縫都在 ${SEAM_GAP_MM} mm 以內，多半是建模時沒接上（Tinkercad 格點吸附差一格就是 1 mm）。` +
+      '若真是如此，只開支撐是錯的修法：支撐會填進縫裡，拆掉後兩塊就分家；' +
+      '正解是回建模軟體把零件移過去或拉長，讓兩者重疊 0.5 mm 以上，再合併群組（Tinkercad 是 Group）。' +
+      `${SEAM_GAP_MM} mm 只是經驗門檻，不是判定：如果這是刻意留的活動間隙（列印即組裝的籠中球、關節），` +
+      '千萬別把縫補起來，那塊照樣需要支撐，或改設計讓它落地。請先確認設計意圖。'
+    : '寬縫的那幾塊是懸在空中的，需要開支撐或換擺放方向讓它有東西可以站；' +
+      (seams.length > 0
+        ? `另外 ${seams.length} 塊的縫在 ${SEAM_GAP_MM} mm 以內，多半是建模沒接上（要回建模軟體補，不是開支撐），` +
+          '除非那是刻意留的活動間隙。'
+        : '');
+
+  return {
+    code: 'floating-part',
+    severity: 'blocker',
+    summary:
+      `有 ${floating.length} 塊實體沒有接到列印板` +
+      (Number.isFinite(narrowest) ? `（最窄的縫 ${narrowest.toFixed(3)} mm）` : ''),
+    detail:
+      `${lines.join('；')}。${advice}` +
+      'Bambu Studio 對這種情況報「Levitating objects cannot be printed without supports」或「floating regions」。' +
+      '縫寬是模型原始尺寸，在 Studio 裡縮放後會等比例變化。',
+    relatedParameters: allSeams ? [] : ['enable_support', 'support_type'],
   };
 }
 

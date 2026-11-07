@@ -161,7 +161,8 @@ export type PrintabilityCode =
   | 'thin-feature'
   | 'small-footprint'
   | 'tall-and-narrow'
-  | 'large-flat-area';
+  | 'large-flat-area'
+  | 'floating-part';
 
 export type PrintabilityReport = {
   readonly inspection: ModelInspection;
@@ -169,5 +170,14 @@ export type PrintabilityReport = {
   readonly fitsBuildVolume: boolean;
   /** 需要支撐的三角形面積佔比（0–1）。 */
   readonly overhangAreaRatio: number;
+  /** 沒有接到列印板的實體；空陣列代表每一塊都站得住。 */
+  readonly floatingBodies: readonly {
+    readonly name: string;
+    readonly partNames: readonly string[];
+    readonly liftMm: number;
+    readonly nearestBody: string | undefined;
+    readonly gapMm: number | undefined;
+    readonly gapAt: Vec3 | undefined;
+  }[];
   readonly findings: readonly PrintabilityFinding[];
 };

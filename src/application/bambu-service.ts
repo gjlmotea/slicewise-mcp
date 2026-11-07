@@ -397,7 +397,7 @@ export class BambuService {
   // ── 模型 ───────────────────────────────────────────────────────────────
 
   /**
-   * 幾何量測。STL 與 3MF 都吃 —— 判斷看內容不看副檔名。
+   * 幾何量測。STL、3MF 與 OBJ 都吃 —— 判斷看內容不看副檔名。
    *
    * 3MF 會多回零件數與零件清單：多零件的 3MF 拿「合起來的體積」當單一實體看是會誤導的，
    * 使用者要的通常是「這裡面有幾塊東西」。
@@ -433,7 +433,7 @@ export class BambuService {
   /**
    * 零件之間的間隙。列印即組裝的模型能不能動就看這個。
    *
-   * 只有 3MF 有多零件資訊；STL 是單一三角形湯，沒有零件邊界可分，所以會直說量不了，
+   * 只有 3MF 與 OBJ 有多零件資訊；STL 是單一三角形湯，沒有零件邊界可分，所以會直說量不了，
    * 而不是回一個看起來像答案的空報告。
    */
   measureClearance(
@@ -450,7 +450,7 @@ export class BambuService {
     if (mesh.format === 'stl') {
       throw new Error(
         'STL 沒有零件邊界，量不出零件之間的間隙 —— 整個檔案就是一堆沒有分組的三角形。' +
-          '請改用 3MF（Bambu 專案檔或多零件 3MF）；MakerWorld 與 Bambu Studio 匯出的都是。',
+          '請改用 3MF（Bambu 專案檔或多零件 3MF；MakerWorld 與 Bambu Studio 匯出的都是）或 OBJ（Tinkercad 的彩色匯出）。',
       );
     }
 
@@ -478,13 +478,17 @@ export class BambuService {
     } = {},
   ): PrintabilityReport {
     const path = this.#assertAllowed(modelPath);
-    const triangles = loadMesh(this.#deps.readModelFile(path), basename(path)).triangles;
-    return analysePrintability(triangles, {
-      buildVolume: options.buildVolume ?? DEFAULT_PRINTABILITY_OPTIONS.buildVolume,
-      overhangThresholdDegrees:
-        options.overhangThresholdDegrees ?? DEFAULT_PRINTABILITY_OPTIONS.overhangThresholdDegrees,
-      lineWidthMm: options.lineWidthMm ?? DEFAULT_PRINTABILITY_OPTIONS.lineWidthMm,
-    });
+    const mesh = loadMesh(this.#deps.readModelFile(path), basename(path));
+    return analysePrintability(
+      mesh.triangles,
+      {
+        buildVolume: options.buildVolume ?? DEFAULT_PRINTABILITY_OPTIONS.buildVolume,
+        overhangThresholdDegrees:
+          options.overhangThresholdDegrees ?? DEFAULT_PRINTABILITY_OPTIONS.overhangThresholdDegrees,
+        lineWidthMm: options.lineWidthMm ?? DEFAULT_PRINTABILITY_OPTIONS.lineWidthMm,
+      },
+      mesh.parts,
+    );
   }
 
   // ── 目標導向規劃 ───────────────────────────────────────────────────────

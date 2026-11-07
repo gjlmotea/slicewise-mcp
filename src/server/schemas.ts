@@ -384,13 +384,13 @@ export const inspectModelOutputSchema = {
   closed: z.boolean(),
   degenerateTriangles: z.number(),
   openEdges: z.number(),
-  format: z.enum(['stl', '3mf']).optional().describe('實際判讀出來的格式，依內容而非副檔名。'),
+  format: z.enum(['stl', '3mf', 'obj']).optional().describe('實際判讀出來的格式，依內容而非副檔名。'),
   partCount: z.number().optional(),
   parts: z.array(z.object({ name: z.string(), triangleCount: z.number() })).optional(),
 };
 
 export const measureClearanceInputSchema = {
-  modelPath: z.string().describe('3MF 的絕對路徑，必須位於允許的模型目錄內。'),
+  modelPath: z.string().describe('3MF 或 OBJ 的絕對路徑，必須位於允許的模型目錄內。'),
   minimumClearanceMm: z
     .number()
     .positive()
@@ -470,6 +470,19 @@ export const checkPrintabilityOutputSchema = {
   buildVolume: z.object({ x: z.number(), y: z.number(), z: z.number() }),
   fitsBuildVolume: z.boolean(),
   overhangAreaRatio: z.number(),
+  floatingBodies: z
+    .array(
+      z.object({
+        name: z.string(),
+        partNames: z.array(z.string()),
+        liftMm: z.number().describe('這塊實體最低點離列印板的高度。'),
+        nearestBody: z.string().optional(),
+        gapMm: z.number().optional().describe('與最近實體之間的縫寬（模型原始尺寸）。'),
+        gapAt: z.object({ x: z.number(), y: z.number(), z: z.number() }).optional(),
+      }),
+    )
+    .optional()
+    .describe('沒有接到列印板的實體。縫在 2 mm 內通常是建模沒接上，要回建模軟體補，開支撐會讓它印完分家。'),
   findings: z.array(
     z.object({
       code: z.string(),
