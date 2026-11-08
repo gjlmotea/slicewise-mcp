@@ -4,6 +4,8 @@
 
 ![Slicewise：Bambu Studio 的列印前檢查](https://github.com/gjlmotea/slicewise-mcp/raw/main/assets/social-preview.jpg)
 
+https://github.com/user-attachments/assets/76e04c37-36cf-41d4-abff-4d0e62fe6b4f
+
 讓 AI 用 Bambu Studio 的參數、切片器與模型檢查能力工作：切片前先查模型會不會失敗、參數該怎麼調，切完再稽核設定到底有沒有生效。
 
 `@gjlmotea/slicewise-mcp`｜stdio transport｜16 個工具｜不連印表機
