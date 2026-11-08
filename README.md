@@ -2,6 +2,8 @@
 
 **English** | [繁體中文](https://github.com/gjlmotea/slicewise-mcp/blob/main/README.zh-TW.md)
 
+![Slicewise: pre-print checks for Bambu Studio](https://github.com/gjlmotea/slicewise-mcp/raw/main/assets/social-preview.jpg)
+
 Slicewise lets Claude Code, Codex, Gemini CLI or any other [Model Context Protocol](https://modelcontextprotocol.io) client work with **Bambu Studio's presets, slicer and model checks**: find out whether a model will fail before you print it, decide which settings to change and why, then audit the sliced result to see which settings actually took effect.
 
 It does **not** control printers. No MQTT, no uploads, no starting prints.
